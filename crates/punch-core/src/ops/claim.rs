@@ -51,6 +51,7 @@ fn set_claim(
         let number = old.gh_number.ok_or_else(|| PunchError::storage("GitHub card has no number"))?;
         gh.assign(github, number, claimed)?;
         let item = gh.get(github, old.kind, number)?;
+        item.validate(old.kind, Some(number))?;
         let linked = if old.kind == Kind::Issue { linked_pr(gh, github, number)? } else { None };
         Some((project, item, linked))
     } else { None };

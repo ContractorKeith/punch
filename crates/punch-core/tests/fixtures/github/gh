@@ -5,6 +5,9 @@ if test -f "$PUNCH_STATE_DIR/slow"; then
   touch "$PUNCH_STATE_DIR/waiting"
   while ! test -f "$PUNCH_STATE_DIR/release"; do sleep 0.05; done
 fi
+case "$*" in
+  *view*) if test -f "$PUNCH_STATE_DIR/view-response"; then cat "$PUNCH_STATE_DIR/view-response"; exit 0; fi ;;
+esac
 case "${PUNCH_GH_FAILURE:-}" in
   offline) printf '%s\n' 'network connection failed: fixture stderr' >&2; exit 1 ;;
   denied) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;

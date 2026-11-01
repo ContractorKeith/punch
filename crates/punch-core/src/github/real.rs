@@ -40,12 +40,21 @@ impl RealGh {
             .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh JSON: {e}")))
     }
     fn item(&self, mut value: Value, kind: Kind) -> Result<Item, PunchError> {
+        if value.get("kind").is_some_and(|v| *v != json!(kind)) {
+            return Err(PunchError::refusal(
+                GH_FAILED,
+                "gh",
+                "unexpected GitHub card kind",
+            ));
+        }
         value
             .as_object_mut()
             .ok_or_else(|| PunchError::refusal(GH_FAILED, "gh", "expected GitHub card object"))?
             .insert("kind".into(), json!(kind));
-        serde_json::from_value(value)
-            .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh card: {e}")))
+        let item: Item = serde_json::from_value(value)
+            .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh card: {e}")))?;
+        item.validate(kind, None)?;
+        Ok(item)
     }
     fn fields(kind: Kind) -> &'static str {
         if kind == Kind::Pr {
@@ -207,6 +216,7 @@ impl Gh for RealGh {
             Self::fields(kind),
         ])?;
         let mut item = self.item(value, kind)?;
+        item.validate(kind, Some(number))?;
         if kind == Kind::Pr {
             item.closes = self.closing(repo, number)?;
         }

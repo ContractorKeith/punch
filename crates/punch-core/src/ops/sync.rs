@@ -76,12 +76,14 @@ fn fetch_project(
 ) -> Result<Vec<(Item, Option<Item>)>, PunchError> {
     let github = p.github_repo.as_deref().ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
     let mut items = gh.list(github, p.sync_scope)?;
+    for item in &items { item.validate(item.kind, None)?; }
     for task in existing {
         let number = task
             .gh_number
             .ok_or_else(|| PunchError::storage("missing GitHub number"))?;
         // Refresh stored numbers even when outside the open/scope query.
         let fresh = gh.get(github, task.kind, number)?;
+        fresh.validate(task.kind, Some(number))?;
         items.retain(|i| i.kind != task.kind || i.number != number);
         items.push(fresh);
     }
@@ -110,9 +112,9 @@ fn fetch_project(
 }
 
 pub(super) fn linked_pr(gh: &dyn Gh, repo: &str, issue: i64) -> Result<Option<Item>, PunchError> {
-    Ok(gh
-        .linked(repo, issue)?
-        .into_iter()
+    let linked = gh.linked(repo, issue)?;
+    for item in &linked { item.validate(Kind::Pr, None)?; }
+    Ok(linked.into_iter()
         .filter(|p| {
             p.kind == Kind::Pr
                 && (p.state == "OPEN" || p.state == "MERGED")

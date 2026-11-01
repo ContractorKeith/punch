@@ -25,6 +25,23 @@ pub struct Login {
     pub login: String,
 }
 impl Item {
+    pub(crate) fn validate(&self, kind: Kind, number: Option<i64>) -> Result<(), PunchError> {
+        if self.kind != kind
+            || kind == Kind::Local
+            || self.number <= 0
+            || number.is_some_and(|n| self.number != n)
+            || !matches!(self.state.as_str(), "OPEN" | "CLOSED" | "MERGED")
+            || (kind == Kind::Issue && self.state == "MERGED")
+        {
+            return Err(PunchError::refusal(
+                crate::error::GH_FAILED,
+                "gh",
+                "invalid GitHub card identity or state",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn cache(&self, linked: Option<&Item>, fetched: &str) -> GhCache {
         let mut assignees: Vec<_> = self.assignees.iter().map(|a| a.login.clone()).collect();
         assignees.sort();

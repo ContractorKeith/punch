@@ -663,3 +663,104 @@ fn slow_sync_keeps_reads_and_local_add_available() {
         assert_eq!(result.data[0].status, "synced");
     });
 }
+
+fn reject_refresh(value: serde_json::Value) {
+    use punch_core::github::RealGh;
+    let (_dir, mut store) = setup();
+    let gh = Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+    ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+    let before = ops::list(
+        &mut store,
+        &Actor::Person,
+        ops::List {
+            all: true,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .data;
+    let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+    std::fs::write(state.join("view-response"), value.to_string()).unwrap();
+    assert_eq!(
+        RealGh.get("owner/repo", Kind::Issue, 1).unwrap_err().code,
+        "gh-failed"
+    );
+    for unclaim in [false, true] {
+        let error = if unclaim {
+            ops::unclaim(&mut store, &Actor::Person, &RealGh, "demo#1")
+        } else {
+            ops::claim(
+                &mut store,
+                &Actor::Person,
+                &RealGh,
+                "demo#1",
+                Some("worker"),
+            )
+        }
+        .unwrap_err();
+        assert_eq!(error.code, "gh-failed");
+        assert_eq!(
+            ops::list(
+                &mut store,
+                &Actor::Person,
+                ops::List {
+                    all: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data,
+            before
+        );
+    }
+    assert_eq!(
+        ops::sync(&mut store, &Actor::Person, &RealGh, None)
+            .unwrap()
+            .data[0]
+            .status,
+        "failed"
+    );
+    assert_eq!(
+        ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .data,
+        before
+    );
+}
+fn refresh_value() -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(include_str!("fixtures/github/open.json")).unwrap()[0]
+        .clone()
+}
+#[test]
+fn refresh_rejects_wrong_number_without_local_changes() {
+    isolated(|| {
+        let mut value = refresh_value();
+        value["number"] = 999.into();
+        reject_refresh(value);
+    });
+}
+#[test]
+fn refresh_rejects_wrong_kind_without_local_changes() {
+    isolated(|| {
+        let mut value = refresh_value();
+        value["kind"] = "pr".into();
+        reject_refresh(value);
+    });
+}
+#[test]
+fn refresh_rejects_unknown_or_impossible_state_without_local_changes() {
+    isolated(|| {
+        for state in ["BOGUS", "MERGED", "open"] {
+            let mut value = refresh_value();
+            value["state"] = state.into();
+            reject_refresh(value);
+        }
+    });
+}
