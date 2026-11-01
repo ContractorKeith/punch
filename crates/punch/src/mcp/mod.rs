@@ -1,10 +1,38 @@
 //! Synchronous newline-delimited JSON-RPC; stdout contains protocol responses only.
 mod tools;
 use punch_core::error::PunchError;
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 use std::io::{BufRead, Read, Write};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+// Parse containers as raw tokens so serde_json's private number tag cannot turn
+// a wire object into a number. Genuine numeric tokens retain exact precision.
+fn wire_value(raw: &RawValue, depth: usize) -> Result<Value, serde_json::Error> {
+    if depth >= 128 {
+        return Err(serde::de::Error::custom("JSON nesting limit exceeded"));
+    }
+    match raw.get().as_bytes().first() {
+        Some(b'{') => {
+            let fields: std::collections::BTreeMap<String, Box<RawValue>> =
+                serde_json::from_str(raw.get())?;
+            fields
+                .into_iter()
+                .map(|(key, value)| Ok((key, wire_value(&value, depth + 1)?)))
+                .collect::<Result<serde_json::Map<_, _>, _>>()
+                .map(Value::Object)
+        }
+        Some(b'[') => {
+            let items: Vec<Box<RawValue>> = serde_json::from_str(raw.get())?;
+            items
+                .iter()
+                .map(|value| wire_value(value, depth + 1))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array)
+        }
+        _ => serde_json::from_str(raw.get()),
+    }
+}
 
 fn error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
@@ -46,7 +74,8 @@ fn serve(mut input: impl BufRead, mut output: impl Write, slot: &str) -> Result<
             }
             Some(error(Value::Null, -32600, "Request exceeds 1 MiB"))
         } else {
-            match serde_json::from_slice::<Value>(&line) {
+            match serde_json::from_slice::<Box<RawValue>>(&line).and_then(|raw| wire_value(&raw, 0))
+            {
                 Err(_) => Some(error(Value::Null, -32700, "Parse error")),
                 Ok(request) => {
                     let id = request.get("id").cloned().unwrap_or(Value::Null);

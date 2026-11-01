@@ -833,3 +833,36 @@ fn readme_states_fetched_at_only_changed_false_once() {
     );
     assert!(!readme.contains("MCP, and Basecamp integration arrive in later"));
 }
+
+#[test]
+fn reserved_number_objects_are_invalid_ids() {
+    for id in [
+        r#"{"$serde_json::private::Number":"1"}"#,
+        r#"{"\u0024serde_json::private::Number":"1"}"#,
+        r#"{"$serde_json::private::Number":"18446744073709551615","extra":0}"#,
+    ] {
+        assert_invalid_id(id);
+    }
+}
+
+#[test]
+fn reserved_number_objects_are_invalid_integer_arguments() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    let input = format!(
+        "{}\n{}\n{}\n{}\n",
+        initialize(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"project":"demo","title":"bad","priority":{"$serde_json::private::Number":"1"}}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ready","arguments":{"limit":{"\u0024serde_json::private::Number":"1"}}}}"#,
+        call(4, "list", json!({}))
+    );
+    let replies = raw_session(&dir, input);
+    for reply in &replies[1..3] {
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(envelope(reply)["refusals"][0]["code"], "invalid-input");
+    }
+    assert_eq!(envelope(&replies[3])["data"], json!([]));
+}
