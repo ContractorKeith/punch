@@ -1,0 +1,18 @@
+punch   project: all   filter: -
+todo 3 | doing 0 | review 0 | blocked 0 | done 0 | shipped 0
+┌In progress (0)───┐┌In review (0)─────┐┌Blocked (0)───────┐
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+│                  ││                  ││                  │
+└──────────────────┘└──────────────────┘└──────────────────┘
+h/l column  j/k card  Space move  Enter detail  ? help  q qu

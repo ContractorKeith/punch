@@ -239,7 +239,8 @@ fn catalog_matches_cli_operations_and_exposes_flag_schemas() {
         .filter(|name| !name.starts_with('-') && *name != "help")
         .collect::<Vec<_>>();
     for name in cli_names {
-        if matches!(name, "mcp" | "setup") {
+        // SPEC §11 excludes interactive board and transport/setup commands.
+        if matches!(name, "board" | "mcp" | "setup") {
             continue;
         }
         if name == "project" {

@@ -1,0 +1,26 @@
+punch   project: all   filter: -
+todo ┌Detail · j/k scroll, Esc close──────────────────────────────────────────────────────────┐
+┌Todo│Inspect the complete detail pane                                                        │────┐
+│> t1│Ref: t1                                                                                 │    │
+│  In│Project: alpha                                                                          │    │
+│  du│Column: todo                                                                            │    │
+│  t3│Priority: 1                                                                             │    │
+│  Sh│Due: 2026-12-01                                                                         │    │
+│    │Assignee: keith                                                                         │    │
+│    │Slot: board-agent                                                                       │    │
+│    │Dependencies:                                                                           │    │
+│    │t2 [doing] Write docs                                                                   │    │
+│    │                                                                                        │    │
+│    │Notes:                                                                                  │    │
+│    │Check every field                                                                       │    │
+│    │Keep the second note line                                                               │    │
+│    │GitHub: https://github.com/example/demo/issues/42                                       │    │
+│    │Fetched: 2026-11-01T12:34:56Z                                                           │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+│    │                                                                                        │    │
+└────└────────────────────────────────────────────────────────────────────────────────────────┘────┘
+h/l column  j/k card  Space move  Enter detail  ? help  q quit

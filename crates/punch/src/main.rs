@@ -1,6 +1,7 @@
 //! CLI adapter over punch-core operations.
 mod cli;
 mod mcp;
+mod tui;
 use clap::{CommandFactory, Parser};
 use punch_core::error::PunchError;
 use std::process::ExitCode;
@@ -40,6 +41,18 @@ fn main() -> ExitCode {
             return failure(PunchError::usage(e), json);
         }
     };
+    if !args.json && (args.command.is_none() || matches!(args.command, Some(cli::Command::Board))) {
+        let actor = args
+            .slot
+            .as_ref()
+            .map_or(punch_core::model::Actor::Person, |s| {
+                punch_core::model::Actor::Agent(s.clone())
+            });
+        return match tui::run(actor) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => failure(e, false),
+        };
+    }
     if args.command.is_none() {
         if args.json {
             println!(
