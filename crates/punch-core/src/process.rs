@@ -1,5 +1,11 @@
 //! Subprocess deadlines shared by external CLI adapters.
-use std::process::Command;
+use std::{os::unix::process::CommandExt, process::Command};
+
+fn kill_group(id: u32) {
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{id}")])
+        .status();
+}
 
 // Drain both pipes while polling: large process responses must not block on pipe capacity.
 pub(crate) fn run_command(
@@ -12,10 +18,12 @@ pub(crate) fn run_command(
         time::{Duration, Instant},
     };
     let mut child = command
+        .process_group(0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
+    let group = child.id();
     let stdout = child
         .stdout
         .take()
@@ -41,7 +49,7 @@ pub(crate) fn run_command(
             Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(10)),
             result => {
-                let _ = child.kill();
+                kill_group(group);
                 let _ = child.wait();
                 // Do not wait on inherited pipes held by grandchildren after killing the process.
                 return Err(match result {
@@ -63,17 +71,42 @@ pub(crate) fn run_command(
             })?
             .map_err(|e| e.to_string())
     };
-    Ok(std::process::Output {
-        status,
-        stdout: collect(stdout)?,
-        stderr: collect(stderr)?,
-    })
+    let result = (|| {
+        Ok(std::process::Output {
+            status,
+            stdout: collect(stdout)?,
+            stderr: collect(stderr)?,
+        })
+    })();
+    if result.is_err() {
+        kill_group(group);
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[test]
+    fn timeout_kills_forked_descendant() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("descendant-survived");
+        let mut command = Command::new("sh");
+        command.env("PUNCH_STATE_DIR", dir.path()).args([
+            "-c",
+            "(sleep 0.3; touch \"$1\") &",
+            "fake",
+            marker.to_str().unwrap(),
+        ]);
+        assert!(
+            run_command(command, std::time::Duration::from_millis(50))
+                .unwrap_err()
+                .contains("timeout")
+        );
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert!(!marker.exists(), "forked descendant survived timeout");
+    }
     #[test]
     fn inherited_gh_output_pipes_obey_timeout() {
         let dir = tempfile::tempdir().unwrap();
