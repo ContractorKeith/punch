@@ -1,6 +1,7 @@
 //! Stable refusal codes and errors shared by all adapters.
 use serde::Serialize;
 
+pub const STALE: &str = "stale";
 pub const STORE_TOO_NEW: &str = "store-too-new";
 pub const UNKNOWN_PROJECT: &str = "unknown-project";
 pub const PROJECT_EXISTS: &str = "project-exists";

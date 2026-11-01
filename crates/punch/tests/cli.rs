@@ -349,9 +349,9 @@ fn environment_actor_is_enforced_and_explicit_as_overrides_it() {
     );
 }
 #[test]
-fn bare_help_and_read_help_do_not_open_store() {
+fn explicit_help_and_read_help_do_not_open_store() {
     let dir = TempDir::new().unwrap();
-    run(&dir, &[]).success();
+    run(&dir, &["--help"]).success();
     for command in [
         vec!["list", "--help"],
         vec!["show", "--help"],
@@ -540,4 +540,14 @@ fn local_assignee_identity_and_archive_control_add_idempotence() {
         )["data"]["existing"],
         false
     );
+}
+
+#[test]
+fn board_json_stays_noninteractive_and_nonterminal_board_refuses_cleanly() {
+    let dir = TempDir::new().unwrap();
+    run(&dir, &["board", "--json"]).code(2);
+    run(&dir, &[])
+        .code(2)
+        .stderr("invalid-input: the board requires a terminal; use list --json for agents\n");
+    run(&dir, &["board"]).code(2);
 }

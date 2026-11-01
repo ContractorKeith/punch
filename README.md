@@ -45,3 +45,19 @@ The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
 temporary directory. GitHub synchronization, the board, MCP, and Basecamp
 integration arrive in later phases.
+
+## Board (phase 2)
+
+Bare `punch` and `punch board` open the interactive board in a terminal.
+Use `h/l` for columns, `j/k` for cards, `p` for projects, `/` for text filtering,
+`Enter` for details, `?` for help, and `q` to quit. Narrow terminals show the
+focused column and as many neighbours as fit. External CLI changes reload once
+a second. `--json` remains noninteractive; agents should use `list --json`.
+
+Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
+`P`, add with `a`, edit notes with `e` (set `$EDITOR`), and archive with `x`
+then `y`. Adding from “all” first asks for a project; new cards start in Todo.
+Notes edits and archive confirmations retain the original revision, so an
+external update produces `stale` and reloads instead of overwriting it. Other
+refusals flash for five seconds. `j/k` scroll long detail and help panes;
+`Esc` closes a pane or cancels input.

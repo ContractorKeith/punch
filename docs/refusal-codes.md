@@ -5,6 +5,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 
 | code | meaning |
 |---|---|
+| `stale` | A revision-checked update saw a newer card revision. Nothing changes; the board reloads. Exit 1. |
 | `unknown-project` | The project slug does not exist. Exit 1. |
 | `project-exists` | The slug has different fields, or another project owns the GitHub repository. Exit 1. |
 | `unknown-task` | No task matches the reference. Exit 1. |
@@ -35,3 +36,7 @@ rolls back the entire plan and exits 3 with a refusal envelope.
 
 Help/version requests exit 0; with `--json`, their text is the success envelope's
 `data` string. Without a subcommand, punch prints help without opening a store.
+
+Phase 2: without a subcommand, an interactive terminal opens the board. Bare
+`punch --json` retains the help envelope; `punch board --json` exits 2 because
+the board is interactive. `punch --help` still prints help without a store.
