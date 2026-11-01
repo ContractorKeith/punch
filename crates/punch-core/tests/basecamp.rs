@@ -172,6 +172,10 @@ if [ -f "$PUNCH_STATE_DIR/bad-json" ]; then
     echo 'not JSON'
     exit 0
 fi
+if [ -f "$PUNCH_STATE_DIR/hang" ]; then
+    echo $$ > "$PUNCH_STATE_DIR/waiting"
+    while :; do sleep 1; done
+fi
 case "$2" in
 create|update) echo '{"ok":true,"data":{"id":99,"title":"fixture"}}' ;;
 move) echo '{"ok":true,"data":{"id":"99","status":"moved","column":"40"}}' ;;
@@ -593,5 +597,46 @@ fn plan_mirrors_valid_new_tasks_once_and_returns_card_state_for_existing_items()
         assert_eq!(json["data"][2]["status"], "failed");
         assert_eq!(json["data"][0]["task"]["basecamp_card"]["card_id"], "99");
         assert_eq!(json["data"][1]["task"]["basecamp_card"]["card_id"], "99");
+    });
+}
+
+#[test]
+fn hung_basecamp_commits_locally_keeps_store_available_and_times_out() {
+    isolated(|| {
+        use std::time::{Duration, Instant};
+        let (store, _) = setup();
+        drop(store);
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(root.join("hang"), "").unwrap();
+        let worker = std::thread::spawn(|| {
+            let mut store = Store::open().unwrap();
+            let start = Instant::now();
+            let task = add(&mut store);
+            assert!(start.elapsed() >= Duration::from_secs(30));
+            assert!(start.elapsed() < Duration::from_secs(35));
+            task
+        });
+        let start = Instant::now();
+        while !root.join("waiting").exists() {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut other = Store::open().unwrap();
+        let task = ops::show(&mut other, &Actor::Person, "t1").unwrap().data;
+        assert_eq!(task.title, "Fix it");
+        ops::note(&mut other, &Actor::Person, "t1", "concurrent note").unwrap();
+        assert!(start.elapsed() < Duration::from_secs(3));
+        let task = worker.join().unwrap();
+        let card = task.basecamp_card.unwrap();
+        assert!(card.dirty);
+        assert!(card.last_error.unwrap().contains("timeout"));
+        let pid = std::fs::read_to_string(root.join("waiting")).unwrap();
+        assert!(
+            !std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .status()
+                .unwrap()
+                .success()
+        );
     });
 }

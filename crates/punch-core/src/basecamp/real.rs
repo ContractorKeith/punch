@@ -7,11 +7,12 @@ use std::process::{Command, Stdio};
 pub struct RealBasecamp;
 
 fn run(args: &[&str]) -> Result<Value, String> {
-    let output = Command::new("basecamp")
+    let mut command = Command::new("basecamp");
+    command
         .args(args)
         .env("BASECAMP_NONINTERACTIVE", "1")
-        .stdin(Stdio::null())
-        .output()
+        .stdin(Stdio::null());
+    let output = crate::process::run_command(command, std::time::Duration::from_secs(30))
         .map_err(|e| format!("basecamp: {e}"))?;
     if !output.status.success() {
         return Err(format!(

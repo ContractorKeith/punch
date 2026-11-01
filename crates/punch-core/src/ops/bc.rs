@@ -67,7 +67,7 @@ pub fn bc_status(
     _actor: &Actor,
     project: Option<&str>,
 ) -> Result<Outcome<Vec<BcStatus>>, PunchError> {
-    store.transaction(|repo| {
+    store.read_transaction(|repo| {
         if let Some(slug) = project {
             find_project(repo, slug)?;
         }
@@ -103,26 +103,22 @@ pub(super) fn mutate<T>(
     f: impl FnOnce(&crate::store::Repository<'_>) -> Result<Outcome<T>, PunchError>,
     refresh: fn(&mut T, &[Task]),
 ) -> Result<Outcome<T>, PunchError> {
-    let bc = store.basecamp.clone();
-    store.transaction(|repo| {
+    let (mut out, changed) = store.transaction(|repo| {
         let before = repo.tasks()?;
-        let mut out = f(repo)?;
-        let tasks = repo.tasks()?;
-        let changed: Vec<_> = tasks
-            .iter()
-            .filter(|t| {
-                before
-                    .iter()
-                    .find(|b| b.id == t.id)
-                    .is_none_or(|b| b.column != t.column || b.title != t.title || b.slot != t.slot)
-            })
-            .cloned()
-            .collect();
-        let (_, warnings) = mirror(repo, bc.as_ref(), &changed)?;
-        out.warnings.extend(warnings);
+        let out = f(repo)?;
+        let changed = repo.tasks()?.into_iter().filter(|t| {
+            before.iter().find(|b| b.id == t.id)
+                .is_none_or(|b| b.column != t.column || b.title != t.title || b.slot != t.slot)
+        }).collect::<Vec<_>>();
+        Ok((out, changed))
+    })?;
+    let (_, warnings) = mirror(store, &changed)?;
+    out.warnings.extend(warnings);
+    store.read_transaction(|repo| {
         refresh(&mut out.data, &repo.tasks()?);
-        Ok(out)
-    })
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 pub(super) fn refresh_task(data: &mut Task, tasks: &[Task]) {
@@ -138,12 +134,11 @@ pub(super) fn mutate_task(
 }
 
 fn mirror(
-    repo: &crate::store::Repository<'_>,
-    bc: &dyn crate::basecamp::Basecamp,
+    store: &mut Store,
     tasks: &[Task],
 ) -> Result<(bool, Vec<String>), PunchError> {
-    let links = repo.basecamp_links()?;
-    let projects = repo.projects()?;
+    let bc = store.basecamp.clone();
+    let (links, projects) = store.read_transaction(|repo| Ok((repo.basecamp_links()?, repo.projects()?)))?;
     let mut warnings = vec![];
     let mut changed = false;
     for task in tasks
@@ -199,7 +194,15 @@ fn mirror(
                 card.last_error = Some(error);
             }
         }
-        changed |= repo.save_basecamp_card(task.id, &card)?;
+        changed |= store.transaction(|repo| {
+            // A concurrent relink must never receive an old table's card ID.
+            if !repo.basecamp_links()?.contains(link) { return Ok(false); }
+            let mut card = card.clone();
+            if repo.tasks()?.into_iter().find(|t| t.id == task.id).is_some_and(|current| current.revision != task.revision) {
+                card.dirty = true;
+            }
+            repo.save_basecamp_card(task.id, &card)
+        })?;
     }
     Ok((changed, warnings))
 }
@@ -208,13 +211,7 @@ pub(super) fn reconcile(
     store: &mut Store,
     project: Option<&str>,
 ) -> Result<(bool, Vec<String>), PunchError> {
-    let bc = store.basecamp.clone();
-    store.transaction(|repo| {
-        let tasks = repo
-            .tasks()?
-            .into_iter()
-            .filter(|t| project.is_none_or(|p| t.project == p))
-            .collect::<Vec<_>>();
-        mirror(repo, bc.as_ref(), &tasks)
-    })
+    let tasks = store.read_transaction(|repo| Ok(repo.tasks()?.into_iter()
+        .filter(|t| project.is_none_or(|p| t.project == p)).collect::<Vec<_>>()))?;
+    mirror(store, &tasks)
 }
