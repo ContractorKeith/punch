@@ -41,7 +41,7 @@ pub(crate) fn diagnostic(input: &str) -> String {
                     } else {
                         rest
                     };
-                    let spaces = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+                    let spaces = rest.len() - rest.trim_start().len();
                     let separator = rest.as_bytes().get(spaces);
                     if (key == "bearer" && spaces > 0)
                         || (key != "bearer" && matches!(separator, Some(b':' | b'=')))
@@ -59,25 +59,37 @@ pub(crate) fn diagnostic(input: &str) -> String {
             }
         }
         if let Some((key, mut start)) = matched {
-            while input
-                .as_bytes()
-                .get(start)
-                .is_some_and(u8::is_ascii_whitespace)
-            {
-                start += 1;
-            }
+            start += input[start..].len() - input[start..].trim_start().len();
             out.push_str(&input[at..start]);
-            out.push_str("[REDACTED]");
+            // A JSON string marker stays intact when the next boundary sanitizes again.
+            out.push_str("\"[REDACTED]\"");
             let rest = &input[start..];
-            let end = if key == "authorization" {
-                rest.find(['\r', '\n']).unwrap_or(rest.len())
-            } else if let Some(quote @ ('\'' | '"')) = rest.chars().next() {
+            let (scheme, value) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            let scheme_bytes = if key == "authorization"
+                && ["bearer", "basic"]
+                    .iter()
+                    .any(|s| scheme.eq_ignore_ascii_case(s))
+            {
+                rest.len() - value.trim_start().len()
+            } else {
+                0
+            };
+            let rest = &rest[scheme_bytes..];
+            let end = if rest.starts_with('"') {
+                // Let JSON find the real closing quote, including escapes and Unicode.
+                let mut strings = serde_json::Deserializer::from_str(rest).into_iter::<String>();
+                match strings.next() {
+                    Some(Ok(_)) => strings.byte_offset(),
+                    // A malformed or unterminated credential must not expose its tail.
+                    _ => rest.len(),
+                }
+            } else if let Some(quote @ '\'') = rest.chars().next() {
                 rest[1..].find(quote).map_or(rest.len(), |i| i + 2)
             } else {
-                rest.find(|c: char| c.is_whitespace() || matches!(c, '&' | ',' | ';' | '"' | '\''))
+                rest.find(|c: char| c.is_whitespace() || matches!(c, '&' | ',' | ';' | '}' | ']'))
                     .unwrap_or(rest.len())
             };
-            at = start + end;
+            at = start + scheme_bytes + end;
         } else {
             let ch = input[at..].chars().next().unwrap_or_default();
             out.push(ch);

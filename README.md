@@ -108,10 +108,11 @@ tasks, omitting empty slots. Unmapped columns produce `basecamp-unmapped` warnin
 The local task and dirty mirror intent commit before any Basecamp call; no
 transaction stays open while the CLI runs. Each call has a 30-second timeout.
 Failures produce `basecamp-failed` warnings while the task operation succeeds.
-Credentials in diagnostics are redacted before warnings or storage, and each
-diagnostic is limited to 2 KiB. Each captured stream is capped at 1 MiB; excess
-output is drained and reported as truncated. A timeout kills the process group
-and includes stderr received before the deadline.
+Credentials in diagnostics are redacted before warnings or storage. Quoted JSON
+values honor string escapes, and whitespace around credential separators may
+include line breaks. Each diagnostic is limited to 2 KiB. Each captured stream
+is capped at 1 MiB; excess output is drained and reported as truncated. A timeout
+kills the process group and includes stderr received before the deadline.
 Status shows mapped columns, dirty cards, and their last errors. Failed creates
 have an empty card ID until retried. A store claim serializes creation across
 processes; after a crash, sync can retry once the five-minute claim expires.

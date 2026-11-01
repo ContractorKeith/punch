@@ -50,7 +50,7 @@ operation's exit code:
 
 | code | meaning |
 |---|---|
-| `basecamp-failed` | The mirror failed; the task remains committed, with a dirty card and last error for retry on sync. Timeout diagnostics include captured stderr; credentials are redacted. |
+| `basecamp-failed` | The mirror failed; the task remains committed, with a dirty card and last error for retry on sync. Timeout diagnostics include captured stderr; credentials are redacted, including JSON string escapes and line breaks around separators. |
 | `basecamp-unmapped` | The task's column has no Basecamp mapping; the mirror is skipped. |
 
 `bc link` also uses `agent-cannot-manage-projects` when called by an agent.

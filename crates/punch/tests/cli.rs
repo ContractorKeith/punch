@@ -889,3 +889,157 @@ fn notes_advance_returned_and_persisted_revision_on_every_append() {
         assert_eq!(json(&dir, &["show", "t1"])["data"], result["data"]);
     }
 }
+
+#[test]
+fn basecamp_json_credentials_are_redacted_in_warnings_show_and_storage() {
+    use std::os::unix::fs::PermissionsExt;
+    let cases: &[(&str, &str)] = &[
+        ("compact JSON", r#"{"access_token":"SYNTHETIC_COMPACT"}"#),
+        (
+            "spaces and mixed case",
+            r#"{ "AcCeSs_ToKeN"  :  "SYNTHETIC_SPACES" }"#,
+        ),
+        (
+            "LF before colon",
+            "{\"access_token\"\n: \"SYNTHETIC_LF_BEFORE\"}",
+        ),
+        (
+            "LF after colon",
+            "{\"access_token\":\n\"SYNTHETIC_LF_AFTER\"}",
+        ),
+        ("LF on both sides", "{\"token\"\n:\n\"SYNTHETIC_LF_BOTH\"}"),
+        (
+            "CRLF before colon",
+            "{\"access_token\"\r\n: \"SYNTHETIC_CRLF_BEFORE\"}",
+        ),
+        (
+            "CRLF after colon",
+            "{\"access_token\":\r\n\"SYNTHETIC_CRLF_AFTER\"}",
+        ),
+        (
+            "CRLF on both sides",
+            "{\"token\"\r\n:\r\n\"SYNTHETIC_CRLF_BOTH\"}",
+        ),
+        (
+            "escaped quote",
+            r#"{"access_token":"SYNTHETIC_HEAD\"split SYNTHETIC_TAIL"}"#,
+        ),
+        (
+            "escaped backslash",
+            r#"{"token":"SYNTHETIC_HEAD\\ SYNTHETIC_TAIL\\"}"#,
+        ),
+        (
+            "backslashes then quote",
+            r#"{"api_key":"SYNTHETIC_HEAD\\\" SYNTHETIC_TAIL"}"#,
+        ),
+        ("quote in value", r#"{"token":"\" SYNTHETIC_QUOTE"}"#),
+        (
+            "unicode escape",
+            r#"{"token":"SYNTHETIC_HEAD\u0022 SYNTHETIC_TAIL"}"#,
+        ),
+        ("unquoted equals", "token=SYNTHETIC_EQUALS"),
+        ("unquoted colon", "api_key: SYNTHETIC_COLON"),
+        ("unquoted whitespace", "TOKEN\r\n=\r\nSYNTHETIC_WHITESPACE"),
+        (
+            "authorization header",
+            "Authorization: Bearer SYNTHETIC_HEADER",
+        ),
+        ("bearer", "request failed: Bearer SYNTHETIC_BEARER"),
+        ("basic header", "Authorization: Basic SYNTHETIC_BASIC"),
+        (
+            "authorization then token",
+            "Authorization: Bearer SYNTHETIC_HEADER; token=SYNTHETIC_TOKEN",
+        ),
+        (
+            "quoted authorization",
+            r#"{"Authorization":"SYNTHETIC_AUTH\" SYNTHETIC_TAIL"}"#,
+        ),
+        ("unquoted quote", r#"token=SYNTHETIC_HEAD"SYNTHETIC_TAIL"#),
+        ("unterminated JSON", r#"{"token":"SYNTHETIC_UNTERMINATED"#),
+        (
+            "two secrets",
+            r#"{"token":"SYNTHETIC_ONE\" split SYNTHETIC_TAIL","api_key":"SYNTHETIC_TWO"}"#,
+        ),
+        (
+            "unquoted delimiters",
+            "token=SYNTHETIC_ONE} api_key=SYNTHETIC_TWO] token=SYNTHETIC_THREE&api-key=SYNTHETIC_FOUR; token=SYNTHETIC_FIVE,",
+        ),
+        ("non-secret key", "tokenizer: on"),
+    ];
+    for (name, diagnostic) in cases {
+        for stream in ["stderr", "stdout"] {
+            let dir = setup();
+            json(
+                &dir,
+                &[
+                    "bc",
+                    "link",
+                    "-p",
+                    "demo",
+                    "--bucket",
+                    "10",
+                    "--card-table",
+                    "20",
+                    "--map",
+                    "todo=30",
+                ],
+            );
+            let bin = dir.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            std::fs::write(dir.path().join("diagnostic"), diagnostic).unwrap();
+            let script = bin.join("basecamp");
+            let redirect = if stream == "stderr" { " >&2" } else { "" };
+            std::fs::write(
+                &script,
+                format!("#!/bin/sh\ncat \"$PUNCH_STATE_DIR/diagnostic\"{redirect}\nexit 42\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let mut paths = vec![bin];
+            paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+            let output = Command::new(assert_cmd::cargo::cargo_bin!("punch"))
+                .env("PUNCH_STATE_DIR", dir.path())
+                .env_remove("PUNCH_AGENT")
+                .env("PATH", std::env::join_paths(paths).unwrap())
+                .args(["add", "x", "-p", "demo", "--json"])
+                .assert()
+                .success()
+                .get_output()
+                .clone();
+            assert!(output.stderr.is_empty(), "{name} ({stream})");
+            let added: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(added["ok"], true);
+            let warning = added["warnings"][0].as_str().unwrap();
+            assert!(warning.starts_with("basecamp-failed:"));
+            let show = run(&dir, &["show", "t1", "--json"])
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let show = String::from_utf8(show).unwrap();
+            let stored: String = rusqlite::Connection::open(dir.path().join("punch.db"))
+                .unwrap()
+                .query_row(
+                    "SELECT last_error FROM basecamp_cards WHERE task_id=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            for (surface, value) in [
+                ("warning", warning),
+                ("show --json", show.as_str()),
+                ("last_error", stored.as_str()),
+            ] {
+                assert!(
+                    !value.contains("SYNTHETIC_"),
+                    "{name} ({stream}) leaked in {surface}: {value}"
+                );
+                if *name == "non-secret key" {
+                    assert!(value.contains("tokenizer: on"), "{surface}: {value}");
+                } else {
+                    assert!(value.contains("[REDACTED]"), "{surface}: {value}");
+                }
+            }
+        }
+    }
+}
