@@ -1,0 +1,18 @@
+[package]
+name = "punch-cli"
+description = "A terminal punch list across every project, with GitHub as the source of truth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "punch"
+path = "src/main.rs"
+
+[dependencies]
+punch-core = { path = "../punch-core" }
+
+[lints]
+workspace = true
