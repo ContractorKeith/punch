@@ -169,6 +169,9 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         .slot
         .as_ref()
         .map_or(Actor::Person, |s| Actor::Agent(s.clone()));
+    if matches!(cli.command, Some(Command::Board)) {
+        return Err(PunchError::usage("board is interactive; use list --json"));
+    }
     let mut store = Store::open()?;
     match cli
         .command

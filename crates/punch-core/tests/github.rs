@@ -1175,3 +1175,100 @@ fn large_existing_card_refresh_uses_keyed_replacement_without_scans() {
         }
     });
 }
+
+#[test]
+fn claim_revision_overflow_preserves_local_and_github_tasks() {
+    isolated(|| {
+        for github in [false, true] {
+            for unclaim in [false, true] {
+                let (dir, mut store) = setup();
+                let gh = Fake::new(
+                    serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap(),
+                );
+                let reference = if github {
+                    ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                    "demo#1"
+                } else {
+                    let args = serde_json::from_value(
+                        serde_json::json!({"project":"demo","title":"local"}),
+                    )
+                    .unwrap();
+                    ops::add(&mut store, &Actor::Person, args).unwrap();
+                    "t1"
+                };
+                if unclaim {
+                    ops::claim(&mut store, &Actor::Person, &gh, reference, Some("old")).unwrap();
+                }
+                let task = ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data;
+                let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+                db.execute(
+                    "UPDATE tasks SET revision=?1 WHERE id=?2",
+                    [i64::MAX, task.id],
+                )
+                .unwrap();
+                let before = ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data;
+                let error = if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &gh, reference)
+                } else {
+                    ops::claim(&mut store, &Actor::Person, &gh, reference, Some("new"))
+                }
+                .unwrap_err();
+                assert_eq!(error.code, "storage-failed");
+                assert_eq!(error.exit_code, 3);
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, reference)
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn sync_revision_overflow_rolls_back_task_and_cache_changes() {
+    isolated(|| {
+        let (dir, mut store) = setup();
+        let gh =
+            Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+        ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+        db.execute("UPDATE tasks SET revision=?1", [i64::MAX])
+            .unwrap();
+        let before = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        for item in gh.items.borrow_mut().iter_mut() {
+            item.title.push_str(" changed");
+        }
+        let result = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        assert!(!result.changed);
+        assert_eq!(result.data[0].status, "failed");
+        assert_eq!(result.data[0].refusals[0].code, "storage-failed");
+        assert_eq!(
+            ops::list(
+                &mut store,
+                &Actor::Person,
+                ops::List {
+                    all: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data,
+            before
+        );
+    });
+}
