@@ -12,6 +12,7 @@ struct Fake {
     links: Vec<Item>,
     failure: RefCell<Option<&'static str>>,
     scopes: RefCell<Vec<SyncScope>>,
+    response: RefCell<Option<Item>>,
 }
 impl Fake {
     fn new(items: Vec<Item>) -> Self {
@@ -20,6 +21,7 @@ impl Fake {
             links: vec![],
             failure: RefCell::new(None),
             scopes: RefCell::new(vec![]),
+            response: RefCell::new(None),
         }
     }
     fn check(&self, stage: &str) -> Result<(), punch_core::error::PunchError> {
@@ -48,6 +50,9 @@ impl Gh for Fake {
     }
     fn get(&self, _: &str, kind: Kind, n: i64) -> Result<Item, punch_core::error::PunchError> {
         self.check("get")?;
+        if let Some(item) = self.response.borrow().as_ref() {
+            return Ok(item.clone());
+        }
         Ok(self
             .items
             .borrow()
@@ -784,4 +789,105 @@ fn pagination_rejects_cyclic_cursor() {
 #[test]
 fn pagination_caps_unique_pages() {
     isolated(|| reject_cursors("unique", "pagination page limit"));
+}
+
+#[test]
+fn trait_refresh_validation_preserves_local_state() {
+    isolated(|| {
+        for invalid in ["number", "kind", "state"] {
+            let (_dir, mut store) = setup();
+            let gh =
+                Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+            ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            let before = ops::show(&mut store, &Actor::Person, "demo#1")
+                .unwrap()
+                .data;
+            let mut item = gh.items.borrow()[0].clone();
+            match invalid {
+                "number" => item.number = 999,
+                "kind" => item.kind = Kind::Pr,
+                _ => item.state = "BOGUS".into(),
+            }
+            *gh.response.borrow_mut() = Some(item);
+            for unclaim in [false, true] {
+                let error = if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &gh, "demo#1")
+                } else {
+                    ops::claim(&mut store, &Actor::Person, &gh, "demo#1", Some("worker"))
+                }
+                .unwrap_err();
+                assert_eq!(error.code, "gh-failed");
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, "demo#1")
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+            let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+            assert_eq!(
+                ops::show(&mut store, &Actor::Person, "demo#1")
+                    .unwrap()
+                    .data,
+                before
+            );
+        }
+    });
+}
+
+#[test]
+fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use std::time::{Duration, Instant};
+        for unclaim in [false, true] {
+            let (dir, mut store) = setup();
+            let mut item: Item = serde_json::from_value(refresh_value()).unwrap();
+            item.number = 14895;
+            let gh = Fake::new(vec![item]);
+            ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            if unclaim {
+                ops::claim(&mut store, &Actor::Person, &gh, "demo#14895", Some("old")).unwrap();
+            }
+            let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+            for name in ["release", "waiting"] {
+                let _ = std::fs::remove_file(state.join(name));
+            }
+            std::fs::write(state.join("slow"), "").unwrap();
+            let worker = std::thread::spawn(move || {
+                if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &RealGh, "demo#14895")
+                } else {
+                    ops::claim(
+                        &mut store,
+                        &Actor::Person,
+                        &RealGh,
+                        "demo#14895",
+                        Some("new"),
+                    )
+                }
+            });
+            let start = Instant::now();
+            while !state.join("waiting").exists() {
+                assert!(start.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let mut second = Store::open_at(dir.path()).unwrap();
+            assert!(ops::list(&mut second, &Actor::Person, ops::List::default()).is_ok());
+            let start = Instant::now();
+            let note = ops::note(&mut second, &Actor::Person, "demo#14895", "concurrent edit");
+            let elapsed = start.elapsed();
+            std::fs::write(state.join("release"), "").unwrap();
+            let result = worker.join().unwrap().unwrap();
+            assert!(note.is_ok(), "{note:?}");
+            assert!(elapsed < Duration::from_secs(2));
+            assert!(result.data.notes.contains("concurrent edit"));
+            assert_eq!(result.data.revision, note.unwrap().data.revision + 1);
+            assert_eq!(
+                result.data.slot.as_deref(),
+                if unclaim { None } else { Some("new") }
+            );
+        }
+    });
 }
