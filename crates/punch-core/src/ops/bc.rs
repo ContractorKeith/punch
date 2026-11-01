@@ -110,6 +110,7 @@ pub(super) fn mutate<T>(
             before.iter().find(|b| b.id == t.id)
                 .is_none_or(|b| b.column != t.column || b.title != t.title || b.slot != t.slot)
         }).collect::<Vec<_>>();
+        prepare(repo, &changed, true)?;
         Ok((out, changed))
     })?;
     let (_, warnings) = mirror(store, &changed)?;
@@ -171,12 +172,16 @@ fn mirror(
             last_error: None,
         });
         let result = if card.card_id.is_empty() {
-            bc.create(link, column, &title).and_then(|id| {
-                if id.is_empty() {
-                    Err("Basecamp returned an empty card ID".into())
-                } else {
+            bc.find_card(link, &title).and_then(|existing| {
+                if let Some(id) = existing {
                     card.card_id = id;
-                    Ok(())
+                    bc.move_card(link, &card.card_id, column)
+                        .and_then(|()| bc.update_title(link, &card.card_id, &title))
+                } else {
+                    bc.create(link, column, &title).and_then(|id| {
+                        if id.is_empty() { Err("Basecamp returned an empty card ID".into()) }
+                        else { card.card_id = id; Ok(()) }
+                    })
                 }
             })
         } else {
@@ -212,7 +217,27 @@ pub(super) fn reconcile(
     store: &mut Store,
     project: Option<&str>,
 ) -> Result<(bool, Vec<String>), PunchError> {
-    let tasks = store.read_transaction(|repo| Ok(repo.tasks()?.into_iter()
-        .filter(|t| project.is_none_or(|p| t.project == p)).collect::<Vec<_>>()))?;
+    let tasks = store.transaction(|repo| {
+        let tasks = repo.tasks()?.into_iter().filter(|t| project.is_none_or(|p| t.project == p)).collect::<Vec<_>>();
+        prepare(repo, &tasks, false)?;
+        Ok(tasks)
+    })?;
     mirror(store, &tasks)
+}
+
+// Save retry intent in the same transaction as the local task mutation.
+fn prepare(repo: &crate::store::Repository<'_>, tasks: &[Task], dirty_existing: bool) -> Result<(), PunchError> {
+    let links = repo.basecamp_links()?;
+    let projects = repo.projects()?;
+    for task in tasks.iter().filter(|t| !t.archived && (dirty_existing || t.basecamp_card.is_none())) {
+        if !projects.iter().any(|p| p.id == task.project_id && !p.archived)
+            || !links.iter().any(|l| l.project_id == task.project_id
+                && l.column_map.contains_key(&task.column.to_string())) { continue; }
+        let mut card = task.basecamp_card.clone().unwrap_or(BasecampCard {
+            card_id: String::new(), dirty: true, last_error: None,
+        });
+        card.dirty = true;
+        repo.save_basecamp_card(task.id, &card)?;
+    }
+    Ok(())
 }

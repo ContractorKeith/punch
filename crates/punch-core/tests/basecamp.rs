@@ -54,6 +54,9 @@ struct Fake {
     fail_title: RefCell<bool>,
 }
 impl Basecamp for Fake {
+    fn find_card(&self, _: &BasecampLink, _: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     fn create(&self, _link: &BasecampLink, column: &str, title: &str) -> Result<String, String> {
         self.calls
             .borrow_mut()
@@ -180,7 +183,18 @@ if [ -f "$PUNCH_STATE_DIR/hang" ]; then
     echo $$ > "$PUNCH_STATE_DIR/waiting"
     while :; do sleep 1; done
 fi
+if [ "$2" = create ] && [ -f "$PUNCH_STATE_DIR/crash-create" ]; then
+    echo $$ > "$PUNCH_STATE_DIR/created"
+    while :; do sleep 1; done
+fi
 case "$2" in
+list)
+    if [ -f "$PUNCH_STATE_DIR/created" ]; then
+        echo '{"ok":true,"data":[{"id":120,"title":"t1 · Fix it extra"},{"id":123,"title":"t1 · Fix it"}]}'
+    else
+        echo '{"ok":true,"data":[]}'
+    fi ;;
+
 create|update) echo '{"ok":true,"data":{"id":99,"title":"fixture"}}' ;;
 move) echo '{"ok":true,"data":{"id":"99","status":"moved","column":"40"}}' ;;
 *) exit 99 ;;
@@ -671,5 +685,55 @@ fn credentials_are_redacted_before_warnings_and_storage() {
             assert!(!out.warnings.join(" ").contains("SECRET_"));
             assert!(error.contains("[REDACTED]"));
         }
+    });
+}
+
+#[test]
+fn pending_create_survives_crash_and_adopts_exact_title_on_retry() {
+    isolated(|| {
+        let (store, _) = setup();
+        drop(store);
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        let child = std::env::var("PUNCH_CRASH_CHILD").is_ok();
+        if child {
+            let mut store = Store::open().unwrap();
+            add(&mut store);
+            return;
+        }
+        std::fs::write(root.join("crash-create"), "").unwrap();
+        let mut worker = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pending_create_survives_crash_and_adopts_exact_title_on_retry",
+            ])
+            .env("PUNCH_CRASH_CHILD", "1")
+            .spawn()
+            .unwrap();
+        let start = std::time::Instant::now();
+        while !root.join("created").exists() {
+            assert!(start.elapsed() < std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        worker.kill().unwrap();
+        worker.wait().unwrap();
+        // Reap the fake CLI as well; remote creation already succeeded.
+        let pid = std::fs::read_to_string(root.join("created")).unwrap();
+        std::process::Command::new("kill")
+            .arg(pid.trim())
+            .status()
+            .unwrap();
+        let mut store = Store::open().unwrap();
+        let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        let pending = task.basecamp_card.unwrap();
+        assert!(pending.dirty);
+        assert!(pending.card_id.is_empty());
+        std::fs::remove_file(root.join("crash-create")).unwrap();
+        ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+        let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        assert_eq!(task.basecamp_card.unwrap().card_id, "123");
+        let calls = std::fs::read_to_string(root.join("calls")).unwrap();
+        assert_eq!(calls.lines().filter(|l| *l == "create").count(), 1);
+        assert!(calls.contains("list\n--project\n10\n--card-table\n20\n--all\n--json"));
+        assert!(calls.contains("move\n123"));
     });
 }

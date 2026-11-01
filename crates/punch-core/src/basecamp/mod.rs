@@ -2,6 +2,7 @@
 use crate::model::BasecampLink;
 
 pub trait Basecamp {
+    fn find_card(&self, link: &BasecampLink, title: &str) -> Result<Option<String>, String>;
     fn create(&self, link: &BasecampLink, column: &str, title: &str) -> Result<String, String>;
     fn move_card(&self, link: &BasecampLink, id: &str, column: &str) -> Result<(), String>;
     fn update_title(&self, link: &BasecampLink, id: &str, title: &str) -> Result<(), String>;

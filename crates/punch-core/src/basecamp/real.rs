@@ -28,13 +28,32 @@ fn run_raw(args: &[&str]) -> Result<Value, String> {
     }
     let value: Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("invalid basecamp JSON: {e}"))?;
-    if value["ok"] != true || !value["data"].is_object() {
+    if value["ok"] != true || !(value["data"].is_object() || value["data"].is_array()) {
         return Err(format!("invalid basecamp response: {value}"));
     }
     Ok(value["data"].clone())
 }
 
 impl Basecamp for RealBasecamp {
+    fn find_card(&self, link: &BasecampLink, title: &str) -> Result<Option<String>, String> {
+        let data = run(&[
+            "cards",
+            "list",
+            "--project",
+            &link.bucket_id,
+            "--card-table",
+            &link.card_table_id,
+            "--all",
+            "--json",
+        ])?;
+        let cards = data.as_array().ok_or("invalid basecamp card list")?;
+        cards
+            .iter()
+            .find(|card| card["title"].as_str() == Some(title))
+            .map(card_id)
+            .transpose()
+    }
+
     fn create(&self, link: &BasecampLink, column: &str, title: &str) -> Result<String, String> {
         let card = run(&[
             "cards",
@@ -49,12 +68,9 @@ impl Basecamp for RealBasecamp {
             "--",
             title,
         ])?;
-        match &card["id"] {
-            Value::Number(n) if n.as_u64().is_some_and(|id| id > 0) => Ok(n.to_string()),
-            Value::String(s) if s.parse::<u64>().is_ok_and(|id| id > 0) => Ok(s.clone()),
-            _ => Err("basecamp create returned no valid card ID".into()),
-        }
+        card_id(&card)
     }
+
     fn move_card(&self, link: &BasecampLink, id: &str, column: &str) -> Result<(), String> {
         run(&[
             "cards",
@@ -84,5 +100,13 @@ impl Basecamp for RealBasecamp {
             "--json",
         ])?;
         Ok(())
+    }
+}
+
+fn card_id(card: &Value) -> Result<String, String> {
+    match &card["id"] {
+        Value::Number(n) if n.as_u64().is_some_and(|id| id > 0) => Ok(n.to_string()),
+        Value::String(s) if s.parse::<u64>().is_ok_and(|id| id > 0) => Ok(s.clone()),
+        _ => Err("basecamp returned no valid card ID".into()),
     }
 }
