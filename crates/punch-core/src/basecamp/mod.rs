@@ -68,5 +68,10 @@ pub(crate) fn diagnostic(input: &str) -> String {
             at += ch.len_utf8();
         }
     }
+    let mut end = out.len().min(2048);
+    while !out.is_char_boundary(end) {
+        end -= 1;
+    }
+    out.truncate(end);
     out
 }

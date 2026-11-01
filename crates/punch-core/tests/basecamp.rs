@@ -786,3 +786,37 @@ fn rejects_fractional_card_id() {
 fn rejects_wrong_type_card_id() {
     rejects_card_id(serde_json::json!({"id":true}));
 }
+
+#[test]
+fn diagnostics_are_capped_at_two_kib_after_redaction() {
+    isolated(|| {
+        let (store, _) = setup();
+        let mut store = store.with_basecamp(Rc::new(punch_core::basecamp::RealBasecamp));
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        // A credential crossing the cutoff must be entirely redacted before truncation.
+        let diagnostic = format!(
+            "{} token={}\n{}",
+            "é".repeat(1000),
+            "SECRET_".repeat(1000),
+            "z".repeat(1024 * 1024)
+        );
+        std::fs::write(root.join("diagnostic"), diagnostic).unwrap();
+        add(&mut store);
+        let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+        let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        let error = task.basecamp_card.unwrap().last_error.unwrap();
+        assert!(error.len() <= 2048, "stored {} bytes", error.len());
+        assert!(out.warnings[0].len() <= 2048);
+        assert!(!error.contains("SECRET_"));
+        assert!(!out.warnings[0].contains("SECRET_"));
+        let link = ops::bc_status(&mut store, &Actor::Person, None)
+            .unwrap()
+            .data
+            .remove(0)
+            .link;
+        let direct = punch_core::basecamp::RealBasecamp
+            .create(&link, "30", "test")
+            .unwrap_err();
+        assert!(direct.len() <= 2048);
+    });
+}

@@ -195,7 +195,7 @@ fn mirror(
             }
             Err(error) => {
                 let error = crate::basecamp::diagnostic(&error);
-                warnings.push(format!("{BASECAMP_FAILED}: {}: {error}", task.reference()));
+                warnings.push(crate::basecamp::diagnostic(&format!("{BASECAMP_FAILED}: {}: {error}", task.reference())));
                 card.dirty = true;
                 card.last_error = Some(error);
             }
