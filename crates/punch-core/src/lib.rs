@@ -1,13 +1,7 @@
-//! punch-core: store, domain rules, and GitHub/Basecamp integrations.
-//! Has no terminal or UI dependencies. See docs/features/v1/SPEC.md.
-
-/// Crate version, shared with the binary.
+//! Shared domain operations and persistence for punch adapters.
+pub mod derive;
+pub mod error;
+pub mod model;
+pub mod ops;
+pub mod store;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn version_is_set() {
-        assert!(!super::VERSION.is_empty());
-    }
-}
