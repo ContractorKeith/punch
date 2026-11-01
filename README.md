@@ -103,7 +103,16 @@ MCP always acts as an agent: `--as` overrides `PUNCH_AGENT`, then defaults to
 the claimed slot separately. Tool fields use long CLI flag names (including
 `clear-due` and `clear-after`), positional argument names such as `reference`,
 and JSON arrays for `after`. `add_plan` accepts a `file` path; `-` is refused
-because stdin belongs to the transport. Basecamp tools arrive in phase 5.
+because stdin belongs to the transport. Paths must resolve through symlinks to
+regular files; devices, FIFOs, and stdin aliases are refused before opening.
+Request payloads (excluding LF or CRLF) and plan files are capped at 1 MiB.
+Oversized lines return Invalid Request; oversized plans return `invalid-input`.
+The server continues with the next request. Basecamp tools arrive in phase 5.
+
+Request ids must be strings or integers fitting i64 or u64 and are echoed
+exactly. Null, fractional, and out-of-range ids return Invalid Request with a
+null response id. Supported protocol versions are `2025-06-18` and `2025-11-25`;
+older or unknown versions negotiate `2025-06-18`. Batches are not supported.
 
 `guide` prints the embedded agent instructions. `setup` only prints the exact
 registration command for Claude Code or Codex; it does not execute it, open the

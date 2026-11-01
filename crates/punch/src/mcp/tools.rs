@@ -3,6 +3,9 @@ use crate::cli::{self, Cli};
 use clap::{ArgAction, CommandFactory, Parser};
 use punch_core::error::PunchError;
 use serde_json::{Value, json};
+use std::io::Read;
+
+const MAX_PLAN_BYTES: u64 = 1024 * 1024;
 
 pub struct Tool {
     pub name: String,
@@ -34,7 +37,7 @@ pub fn catalog() -> Vec<Tool> {
     if let Some(add) = tools.iter().find(|t| t.name == "add") {
         let mut plan = Tool::new(vec!["add"], add.command.clone());
         plan.name = "add_plan".into();
-        plan.schema["properties"] = json!({"file":{"type":"string","description":"JSON plan file path. Stdin (-) is reserved for the MCP transport."}});
+        plan.schema["properties"] = json!({"file":{"type":"string","description":"JSON plan path resolving to a regular file, at most 1 MiB. Stdin (-) is reserved for the MCP transport."}});
         plan.schema["required"] = json!(["file"]);
         tools.push(plan);
     }
@@ -117,12 +120,31 @@ impl Tool {
             }
         }
         // Follow symlinks before opening: devices/FIFOs may consume transport or block.
-        if let Some(path) = object.get("file").and_then(Value::as_str) {
+        let plan = if let Some(path) = object.get("file").and_then(Value::as_str) {
+            if path == "-" {
+                return Err(PunchError::usage("stdin is reserved for the MCP transport"));
+            }
             let metadata = std::fs::metadata(path).map_err(PunchError::usage)?;
             if !metadata.is_file() {
                 return Err(PunchError::usage("MCP plans require a regular file"));
             }
-        }
+            if metadata.len() > MAX_PLAN_BYTES {
+                return Err(PunchError::usage("MCP plan exceeds 1 MiB"));
+            }
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)
+                .map_err(PunchError::usage)?
+                .take(MAX_PLAN_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .map_err(PunchError::usage)?;
+            // The second bound also covers a file growing after metadata was read.
+            if bytes.len() as u64 > MAX_PLAN_BYTES {
+                return Err(PunchError::usage("MCP plan exceeds 1 MiB"));
+            }
+            Some(String::from_utf8(bytes).map_err(PunchError::usage)?)
+        } else {
+            None
+        };
         let mut raw = vec!["punch".to_owned(), format!("--as={slot}"), "--json".into()];
         raw.extend(self.path.clone());
         // Named options precede positionals; -- protects titles/refs starting with '-'.
@@ -169,6 +191,6 @@ impl Tool {
             }
         }
         let cli = Cli::try_parse_from(raw).map_err(PunchError::usage)?;
-        cli::execute(&cli)
+        cli::execute_with_plan(&cli, plan.as_deref())
     }
 }

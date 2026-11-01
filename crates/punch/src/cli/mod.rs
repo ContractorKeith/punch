@@ -178,6 +178,11 @@ fn present<T: Serialize>(out: Outcome<T>) -> Result<Reply, PunchError> {
     })
 }
 pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
+    execute_with_plan(cli, None)
+}
+
+// MCP supplies a validated, bounded plan while sharing the CLI dispatcher.
+pub(crate) fn execute_with_plan(cli: &Cli, plan: Option<&str>) -> Result<Reply, PunchError> {
     if matches!(cli.command, Some(Command::Guide)) {
         return present(Outcome {
             changed: false,
@@ -277,7 +282,9 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         )?),
         Command::Add(a) => {
             if let Some(path) = &a.file {
-                let text = if path == "-" {
+                let text = if let Some(plan) = plan {
+                    plan.to_owned()
+                } else if path == "-" {
                     std::io::read_to_string(std::io::stdin())?
                 } else {
                     std::fs::read_to_string(path)?

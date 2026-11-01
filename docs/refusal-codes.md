@@ -48,5 +48,6 @@ MCP reuses these refusal codes and the CLI JSON envelope. Refusals are tool
 results with `isError: true`, not JSON-RPC errors. Partial plans and partial
 sync failures also set `isError: true`; inspect each item's refusals even when
 `ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
-JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`) with `invalid-input`
+JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`), paths that do not resolve to regular
+files, and plan files over 1 MiB with `invalid-input`
 because stdin carries protocol messages. No phase 4 refusal codes were added.

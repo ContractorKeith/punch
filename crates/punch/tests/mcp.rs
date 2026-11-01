@@ -768,3 +768,55 @@ fn request_id_object_is_invalid() {
 fn request_id_array_is_invalid() {
     assert_invalid_id("[]");
 }
+
+#[test]
+fn request_line_limit_accepts_one_mib_and_recovers_after_oversize() {
+    let dir = TempDir::new().unwrap();
+    let ping = r#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#;
+    let at_limit = format!("{ping}{}", " ".repeat(1024 * 1024 - ping.len()));
+    let input = format!(
+        "{at_limit}\n{at_limit}\r\n{at_limit} \n{}\n{ping}",
+        "x".repeat(10 * 1024 * 1024)
+    );
+    let replies = raw_session(&dir, input);
+    assert_eq!(replies.len(), 5);
+    for reply in [&replies[0], &replies[1], &replies[4]] {
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["result"], json!({}));
+    }
+    for reply in &replies[2..4] {
+        assert_eq!(reply["id"], Value::Null);
+        assert_eq!(reply["error"]["code"], -32600);
+    }
+    // Oversized final lines without a newline are refused too.
+    let replies = raw_session(&dir, format!("{at_limit} "));
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0]["error"]["code"], -32600);
+}
+
+#[test]
+fn plan_limit_accepts_one_mib_and_refuses_larger_files_with_both_envelopes() {
+    let dir = TempDir::new().unwrap();
+    let plan = dir.path().join("plan.json");
+    for size in [1024 * 1024, 1024 * 1024 + 1, 10 * 1024 * 1024] {
+        std::fs::write(&plan, format!("[]{}", " ".repeat(size - 2))).unwrap();
+        let replies = session(
+            &dir,
+            &[
+                initialize(),
+                call(2, "add_plan", json!({"file":plan})),
+                json!({"jsonrpc":"2.0","id":3,"method":"ping"}),
+            ],
+        );
+        let value = envelope(&replies[1]);
+        if size == 1024 * 1024 {
+            assert_eq!(value["ok"], true);
+            assert_eq!(replies[1]["result"]["isError"], false);
+        } else {
+            assert_eq!(value["refusals"][0]["code"], "invalid-input");
+            assert_eq!(replies[1]["result"]["isError"], true);
+        }
+        assert_eq!(replies[2]["id"], 3);
+        assert_eq!(replies[2]["result"], json!({}));
+    }
+}

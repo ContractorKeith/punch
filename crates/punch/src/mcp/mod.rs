@@ -2,7 +2,9 @@
 mod tools;
 use punch_core::error::PunchError;
 use serde_json::{Value, json};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 fn error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
@@ -19,76 +21,100 @@ pub fn run(slot: &str) -> Result<(), PunchError> {
     let stdout = std::io::stdout();
     serve(stdin.lock(), stdout.lock(), slot)
 }
-fn serve(input: impl BufRead, mut output: impl Write, slot: &str) -> Result<(), PunchError> {
+fn serve(mut input: impl BufRead, mut output: impl Write, slot: &str) -> Result<(), PunchError> {
     let catalog = tools::catalog();
     let mut initialized = false;
-    for line in input.lines() {
-        let line = line?;
-        let response = match serde_json::from_str::<Value>(&line) {
-            Err(_) => Some(error(Value::Null, -32700, "Parse error")),
-            Ok(request) => {
-                let id = request.get("id").cloned().unwrap_or(Value::Null);
-                if !request.is_object()
-                    || request["jsonrpc"] != "2.0"
-                    || !request["method"].is_string()
-                    || request.get("id").is_some_and(|v| {
-                        !v.is_string() && v.as_i64().is_none() && v.as_u64().is_none()
-                    })
-                    || request
-                        .get("params")
-                        .is_some_and(|v| !v.is_object() && !v.is_array())
-                {
-                    Some(error(Value::Null, -32600, "Invalid Request"))
-                } else if request.get("id").is_none() {
-                    // Notifications, including initialized, never receive a response.
-                    None
-                } else {
-                    let method = request["method"].as_str().unwrap_or("");
-                    let result = match method {
-                        "initialize"
-                            if !request["params"]["protocolVersion"].is_string()
-                                || !request["params"]["capabilities"].is_object()
-                                || !request["params"]["clientInfo"]["name"].is_string()
-                                || !request["params"]["clientInfo"]["version"].is_string() =>
-                        {
-                            Err((-32602, "Invalid initialize parameters"))
-                        }
-                        "initialize" => {
-                            initialized = true;
-                            let version =
-                                request["params"]["protocolVersion"].as_str().unwrap_or("");
-                            let version = match version {
-                                "2025-06-18" | "2025-11-25" => version,
-                                _ => "2025-06-18",
-                            };
-                            Ok(
-                                json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"punch","version":env!("CARGO_PKG_VERSION")}}),
-                            )
-                        }
-                        "ping" => Ok(json!({})),
-                        "tools/list" if initialized => Ok(
-                            json!({"tools":catalog.iter().map(|t| t.definition()).collect::<Vec<_>>()}),
-                        ),
-                        "tools/call" if initialized => {
-                            let params = &request["params"];
-                            if let Some(tool) = catalog
-                                .iter()
-                                .find(|t| Some(t.name.as_str()) == params["name"].as_str())
+    loop {
+        // At most the payload cap plus CRLF; drain oversize lines without buffering.
+        let mut line = Vec::new();
+        let read = (&mut input)
+            .take((MAX_REQUEST_BYTES + 2) as u64)
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
+            break;
+        }
+        let newline = line.last() == Some(&b'\n');
+        if newline {
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+        }
+        let response = if line.len() > MAX_REQUEST_BYTES {
+            if !newline {
+                input.skip_until(b'\n')?;
+            }
+            Some(error(Value::Null, -32600, "Request exceeds 1 MiB"))
+        } else {
+            match serde_json::from_slice::<Value>(&line) {
+                Err(_) => Some(error(Value::Null, -32700, "Parse error")),
+                Ok(request) => {
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    if !request.is_object()
+                        || request["jsonrpc"] != "2.0"
+                        || !request["method"].is_string()
+                        || request.get("id").is_some_and(|v| {
+                            !v.is_string() && v.as_i64().is_none() && v.as_u64().is_none()
+                        })
+                        || request
+                            .get("params")
+                            .is_some_and(|v| !v.is_object() && !v.is_array())
+                    {
+                        Some(error(Value::Null, -32600, "Invalid Request"))
+                    } else if request.get("id").is_none() {
+                        // Notifications, including initialized, never receive a response.
+                        None
+                    } else {
+                        let method = request["method"].as_str().unwrap_or("");
+                        let result = match method {
+                            "initialize"
+                                if !request["params"]["protocolVersion"].is_string()
+                                    || !request["params"]["capabilities"].is_object()
+                                    || !request["params"]["clientInfo"]["name"].is_string()
+                                    || !request["params"]["clientInfo"]["version"].is_string() =>
                             {
-                                Ok(tool_result(
-                                    tool.call(params.get("arguments").unwrap_or(&json!({})), slot),
-                                ))
-                            } else {
-                                Err((-32602, "Unknown tool"))
+                                Err((-32602, "Invalid initialize parameters"))
                             }
-                        }
-                        "tools/list" | "tools/call" => Err((-32600, "Initialize first")),
-                        _ => Err((-32601, "Method not found")),
-                    };
-                    Some(match result {
-                        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-                        Err((code, message)) => error(id, code, message),
-                    })
+                            "initialize" => {
+                                initialized = true;
+                                let version =
+                                    request["params"]["protocolVersion"].as_str().unwrap_or("");
+                                let version = match version {
+                                    "2025-06-18" | "2025-11-25" => version,
+                                    _ => "2025-06-18",
+                                };
+                                Ok(
+                                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"punch","version":env!("CARGO_PKG_VERSION")}}),
+                                )
+                            }
+                            "ping" => Ok(json!({})),
+                            "tools/list" if initialized => Ok(
+                                json!({"tools":catalog.iter().map(|t| t.definition()).collect::<Vec<_>>()}),
+                            ),
+                            "tools/call" if initialized => {
+                                let params = &request["params"];
+                                if let Some(tool) = catalog
+                                    .iter()
+                                    .find(|t| Some(t.name.as_str()) == params["name"].as_str())
+                                {
+                                    Ok(tool_result(
+                                        tool.call(
+                                            params.get("arguments").unwrap_or(&json!({})),
+                                            slot,
+                                        ),
+                                    ))
+                                } else {
+                                    Err((-32602, "Unknown tool"))
+                                }
+                            }
+                            "tools/list" | "tools/call" => Err((-32600, "Initialize first")),
+                            _ => Err((-32601, "Method not found")),
+                        };
+                        Some(match result {
+                            Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+                            Err((code, message)) => error(id, code, message),
+                        })
+                    }
                 }
             }
         };
