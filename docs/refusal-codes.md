@@ -43,3 +43,10 @@ Sync reports a success envelope with per-project
 `failed`; each project's import is atomic. Any failed project makes the command
 exit 3, while successful projects remain committed. An unlinked or archived
 project is skipped. An unknown `-p` project returns `unknown-project`, exit 1.
+
+MCP reuses these refusal codes and the CLI JSON envelope. Refusals are tool
+results with `isError: true`, not JSON-RPC errors. Partial plans and partial
+sync failures also set `isError: true`; inspect each item's refusals even when
+`ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
+JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`) with `invalid-input`
+because stdin carries protocol messages. No phase 4 refusal codes were added.

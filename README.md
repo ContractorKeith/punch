@@ -73,3 +73,33 @@ returns `offline` or `gh-failed`, preserving local fields. Local claims use the
 actor label (`person` or the agent's identity) as assignee; `--slot` sets the
 slot separately, defaulting to the agent identity. Unclaim clears the local
 assignee and slot; GitHub assignees always come from the refreshed card.
+
+## MCP and agent guide
+
+```bash
+punch guide
+punch mcp --as worker-1
+punch setup claude
+punch setup codex
+```
+
+`mcp` serves newline-delimited JSON-RPC on stdin/stdout synchronously. It exposes
+17 tools for the available CLI operations, including `guide`, `project_add`,
+`project_list`, `project_archive`, and `add_plan` (the `add --file` operation).
+Tools share CLI validation and JSON envelopes. Results include the envelope as
+both `structuredContent` and JSON text in `content`; refusals and partial
+failures set `isError: true`. No stdout logging is emitted.
+
+MCP always acts as an agent: `--as` overrides `PUNCH_AGENT`, then defaults to
+`mcp`. Tools cannot override that identity; `claim`'s `slot` argument controls
+the claimed slot separately. Tool fields use long CLI flag names (including
+`clear-due` and `clear-after`), positional argument names such as `reference`,
+and JSON arrays for `after`. `add_plan` accepts a `file` path; `-` is refused
+because stdin belongs to the transport. Basecamp tools arrive in phase 5.
+
+`guide` prints the embedded agent instructions. `setup` only prints the exact
+registration command for Claude Code or Codex; it does not execute it, open the
+store, or change configuration. Both also support `--json` envelopes.
+
+Sync clarification: a refresh changing only `fetched_at` reports
+`changed: false` and leaves task revisions unchanged.
