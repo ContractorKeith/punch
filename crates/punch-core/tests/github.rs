@@ -613,6 +613,13 @@ fn sync_rolls_back_cards_inserted_before_a_later_refresh_failure() {
 // revision for stale checks and the Basecamp mirror keys off real changes.
 #[test]
 fn resync_without_github_changes_keeps_revision_and_reports_unchanged() {
+    let readme = include_str!("../../../README.md");
+    assert!(
+        readme.contains(
+            "A fetched_at-only refresh reports `changed: false` and keeps task revisions."
+        )
+    );
+    assert!(!readme.contains("A new fetch timestamp counts as"));
     isolated(|| {
         let (_dir, mut store) = setup();
         let gh =

@@ -10,7 +10,7 @@ License: MIT.
 
 ## Usage
 
-Phase 1 provides the local store and CLI. Bare `punch` prints help.
+The CLI supports local tasks, GitHub sync, and claims. Bare `punch` prints help.
 
 ```bash
 punch project add demo --name "Demo project"
@@ -47,8 +47,8 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. GitHub synchronization, the board, MCP, and Basecamp
-integration arrive in later phases.
+temporary directory. The board, MCP, and Basecamp integration arrive in later
+phases.
 
 ## GitHub sync and claims
 
@@ -67,9 +67,13 @@ merged, and archived cards. Archived projects are skipped. Linked closing PRs
 drive issue columns; new PR cards are suppressed when their issue is stored or
 imported in the same sync. Previously imported PR cards retain their identity.
 Sync replaces cached GitHub fields while keeping notes, priority, due dates,
-dependencies, slot, ordering, and archive flags. A new fetch timestamp counts as
-a change. Each project commits atomically; failures are reported alongside
-successful projects, with exit 3 if any project fails.
+dependencies, slot, ordering, and archive flags.
+A fetched_at-only refresh reports `changed: false` and keeps task revisions.
+Each project commits atomically; failures are reported alongside
+successful projects, with exit 3 if any project fails. GitHub fetching completes
+before the short local write transaction, so reads and local writes keep working
+during a slow fetch. Each `gh` subprocess has a 30-second timeout (`gh-failed`).
+GraphQL connection walks reject repeated cursors and stop after 100 pages.
 
 For GitHub cards, claim/unclaim first adds/removes `@me` with `gh issue edit`,
 then refreshes the card before committing locally. A remote or refresh failure
