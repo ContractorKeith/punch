@@ -402,3 +402,44 @@ fn github_dependencies_use_derived_completion_without_deriving_blocked() {
         assert_eq!(ready[0].id, 2);
     });
 }
+
+// GitHub cards come from phase 3 sync; insert one directly to test the guards.
+fn github_issue(store: &mut Store) {
+    store
+        .connection
+        .execute_batch(
+            "INSERT INTO tasks(project_id, kind, gh_number, title, position, created_at, updated_at)
+             SELECT id, 'issue', 566, 'From GitHub', 1.0, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z' FROM projects WHERE slug = 'demo';
+             INSERT INTO gh_cache(task_id, state, assignees, url, fetched_at)
+             SELECT id, 'OPEN', '[]', 'https://github.com/o/r/issues/566', '2026-11-01T00:00:00Z'
+             FROM tasks WHERE gh_number = 566;",
+        )
+        .unwrap();
+}
+#[test]
+fn github_cards_refuse_manual_moves_and_title_edits() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        github_issue(&mut store);
+        let moved =
+            ops::move_task(&mut store, &Actor::Person, "demo#566", Column::Doing).unwrap_err();
+        assert_eq!(moved.code, COLUMN_IS_DERIVED, "{moved:?}");
+        let edited = ops::edit(
+            &mut store,
+            &Actor::Person,
+            "demo#566",
+            ops::Edit {
+                title: Some("Renamed".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(edited.code, GITHUB_OWNED_FIELD);
+        let shown = ops::show(&mut store, &Actor::Person, "demo#566")
+            .unwrap()
+            .data;
+        assert_eq!(shown.title, "From GitHub");
+        assert_eq!(shown.column, Column::Todo);
+    });
+}
