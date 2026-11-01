@@ -5,7 +5,7 @@ pub(crate) use queries::Repository;
 use rusqlite::{Connection, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
@@ -65,7 +65,22 @@ impl Store {
             }
             tx.commit()?;
         }
-        connection.pragma_update(None, "journal_mode", "WAL")?;
+        // Journal-mode changes can return BUSY without calling SQLite's busy handler.
+        let deadline = Instant::now() + Duration::from_millis(5000);
+        loop {
+            match connection.pragma_update(None, "journal_mode", "WAL") {
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if error.code == rusqlite::ErrorCode::DatabaseBusy
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => {
+                    result?;
+                    break;
+                }
+            }
+        }
         Ok(Self { connection })
     }
     /// Serialize reads and writes at the same consistent operation boundary.

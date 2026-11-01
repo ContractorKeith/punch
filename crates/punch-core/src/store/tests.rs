@@ -443,3 +443,58 @@ fn github_cards_refuse_manual_moves_and_title_edits() {
         assert_eq!(shown.column, Column::Todo);
     });
 }
+
+#[test]
+fn first_wal_switch_waits_for_readers() {
+    isolated(|path| {
+        // A competing opener can retain a rollback-journal read lock after migration.
+        drop(Store::open_at(path).unwrap());
+        let db = Connection::open(path.join("punch.db")).unwrap();
+        db.pragma_update(None, "journal_mode", "DELETE").unwrap();
+        db.execute_batch("BEGIN; SELECT * FROM schema_version;")
+            .unwrap();
+        let root = path.to_owned();
+        let (send, recv) = std::sync::mpsc::channel();
+        let opener = std::thread::spawn(move || {
+            send.send(Store::open_at(&root).map(|_| ())).unwrap();
+        });
+        assert!(matches!(
+            recv.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        db.execute_batch("COMMIT").unwrap();
+        recv.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        opener.join().unwrap();
+    });
+}
+
+#[test]
+fn concurrent_first_opens_serialize() {
+    for _ in 0..100 {
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let openers: Vec<_> = (0..8)
+            .map(|_| {
+                let root = dir.path().to_owned();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut store = Store::open_at(&root)?;
+                    ops::project_add(
+                        &mut store,
+                        &Actor::Person,
+                        ops::ProjectAdd {
+                            slug: "demo".into(),
+                            name: None,
+                            github: None,
+                            scope: None,
+                        },
+                    )
+                })
+            })
+            .collect();
+        for opener in openers {
+            opener.join().unwrap().unwrap();
+        }
+    }
+}
