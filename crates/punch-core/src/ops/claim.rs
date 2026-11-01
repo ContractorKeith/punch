@@ -48,20 +48,34 @@ fn set_claim(
         let github = project.github_repo.as_deref().ok_or_else(|| {
             PunchError::refusal(GH_FAILED, reference, "card has no GitHub repository")
         })?;
-        let number = old.gh_number.ok_or_else(|| PunchError::storage("GitHub card has no number"))?;
+        let number = old
+            .gh_number
+            .ok_or_else(|| PunchError::storage("GitHub card has no number"))?;
         gh.assign(github, number, claimed)?;
         let item = gh.get(github, old.kind, number)?;
         item.validate(old.kind, Some(number))?;
-        let linked = if old.kind == Kind::Issue { linked_pr(gh, github, number)? } else { None };
+        let linked = if old.kind == Kind::Issue {
+            linked_pr(gh, github, number)?
+        } else {
+            None
+        };
         Some((project, item, linked))
-    } else { None };
+    } else {
+        None
+    };
     store.transaction(|repo| {
         // Re-read local fields after the remote call so concurrent local edits survive.
         let old = resolve(&repo.tasks()?, reference)?.clone();
         let mut changed = false;
         if let Some((project, item, linked)) = &fetched {
             let timestamp = now()?;
-            changed = repo.upsert_github(project, item, &item.cache(linked.as_ref(), &timestamp), &timestamp, repo.next_position(project.id)?)?;
+            changed = repo.upsert_github(
+                project,
+                item,
+                &item.cache(linked.as_ref(), &timestamp),
+                &timestamp,
+                repo.next_position(project.id)?,
+            )?;
         }
         let mut task = resolve(&repo.tasks()?, reference)?.clone();
         let before = task.clone();

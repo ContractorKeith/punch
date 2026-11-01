@@ -280,6 +280,19 @@ impl Gh for RealGh {
 mod tests {
     use super::*;
     #[test]
+    fn inherited_gh_output_pipes_obey_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .env("PUNCH_STATE_DIR", dir.path())
+            .args(["-c", "sleep 0.4 &"]);
+        let start = std::time::Instant::now();
+        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.code, GH_FAILED);
+        assert!(error.message.contains("timeout"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(300));
+    }
+    #[test]
     fn hung_gh_is_killed_at_timeout() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("survived");
@@ -325,10 +338,13 @@ fn run_command(
         .take()
         .ok_or_else(|| failed("missing gh stderr".into()))?;
     let drain = |mut pipe: Box<dyn Read + Send>| {
+        let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = vec![];
-            pipe.read_to_end(&mut bytes).map(|_| bytes)
-        })
+            let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+            let _ = send.send(result);
+        });
+        receive
     };
     let stdout = drain(Box::new(stdout));
     let stderr = drain(Box::new(stderr));
@@ -348,10 +364,16 @@ fn run_command(
             }
         }
     };
-    let collect = |handle: std::thread::JoinHandle<std::io::Result<Vec<u8>>>| {
-        handle
-            .join()
-            .map_err(|_| failed("gh output reader failed".into()))?
+    // A gh descendant can inherit a pipe even after gh exits; draining shares the deadline.
+    let collect = |receive: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>| {
+        receive
+            .recv_timeout(timeout.saturating_sub(start.elapsed()))
+            .map_err(|e| match e {
+                std::sync::mpsc::RecvTimeoutError::Timeout => {
+                    failed(format!("gh timeout after {} ms", timeout.as_millis()))
+                }
+                _ => failed("gh output reader failed".into()),
+            })?
             .map_err(|e| failed(e.to_string()))
     };
     Ok(std::process::Output {

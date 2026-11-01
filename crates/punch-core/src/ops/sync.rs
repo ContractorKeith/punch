@@ -45,7 +45,13 @@ pub fn sync(
                 let mut changed = false;
                 let mut position = repo.next_position(p.id)?;
                 for (item, linked) in &fetched {
-                    changed |= repo.upsert_github(&p, item, &item.cache(linked.as_ref(), &timestamp), &timestamp, position)?;
+                    changed |= repo.upsert_github(
+                        &p,
+                        item,
+                        &item.cache(linked.as_ref(), &timestamp),
+                        &timestamp,
+                        position,
+                    )?;
                     position += 1.0;
                 }
                 Ok((changed, fetched.len()))
@@ -75,7 +81,10 @@ fn fetch_project(
     p: &Project,
     existing: &[(Kind, i64)],
 ) -> Result<Vec<(Item, Option<Item>)>, PunchError> {
-    let github = p.github_repo.as_deref().ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
+    let github = p
+        .github_repo
+        .as_deref()
+        .ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
     let mut items = vec![];
     let mut indices = BTreeMap::new();
     for item in gh.list(github, p.sync_scope)? {
@@ -88,7 +97,10 @@ fn fetch_project(
             items.push(item);
         }
     }
-    let stored: BTreeSet<_> = existing.iter().map(|(kind, n)| (kind.to_string(), *n)).collect();
+    let stored: BTreeSet<_> = existing
+        .iter()
+        .map(|(kind, n)| (kind.to_string(), *n))
+        .collect();
     for &(kind, number) in existing {
         // Refresh stored numbers even when outside the open/scope query.
         let fresh = gh.get(github, kind, number)?;
@@ -125,8 +137,11 @@ fn fetch_project(
 
 pub(super) fn linked_pr(gh: &dyn Gh, repo: &str, issue: i64) -> Result<Option<Item>, PunchError> {
     let linked = gh.linked(repo, issue)?;
-    for item in &linked { item.validate(Kind::Pr, None)?; }
-    Ok(linked.into_iter()
+    for item in &linked {
+        item.validate(Kind::Pr, None)?;
+    }
+    Ok(linked
+        .into_iter()
         .filter(|p| {
             p.kind == Kind::Pr
                 && (p.state == "OPEN" || p.state == "MERGED")
