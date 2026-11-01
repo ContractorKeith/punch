@@ -181,11 +181,17 @@ if [ -f "$PUNCH_STATE_DIR/bad-json" ]; then
 fi
 if [ -f "$PUNCH_STATE_DIR/hang" ]; then
     echo $$ > "$PUNCH_STATE_DIR/waiting"
-    while :; do sleep 1; done
+    sleep 32
+    echo '{"ok":true,"data":{"id":99}}'
+    exit 0
 fi
 if [ "$2" = create ] && [ -f "$PUNCH_STATE_DIR/crash-create" ]; then
     echo $$ > "$PUNCH_STATE_DIR/created"
     while :; do sleep 1; done
+fi
+if [ -f "$PUNCH_STATE_DIR/response" ]; then
+    cat "$PUNCH_STATE_DIR/response"
+    exit 0
 fi
 case "$2" in
 list)
@@ -736,4 +742,47 @@ fn pending_create_survives_crash_and_adopts_exact_title_on_retry() {
         assert!(calls.contains("list\n--project\n10\n--card-table\n20\n--all\n--json"));
         assert!(calls.contains("move\n123"));
     });
+}
+
+fn rejects_card_id(data: serde_json::Value) {
+    isolated(|| {
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(
+            root.join("response"),
+            serde_json::json!({"ok":true,"data":data}).to_string(),
+        )
+        .unwrap();
+        let link = BasecampLink {
+            project_id: 1,
+            bucket_id: "10".into(),
+            card_table_id: "20".into(),
+            column_map: Default::default(),
+        };
+        let result = punch_core::basecamp::RealBasecamp.create(&link, "30", "test");
+        assert!(result.is_err(), "invalid ID accepted: {result:?}");
+    });
+}
+#[test]
+fn rejects_empty_card_id() {
+    rejects_card_id(serde_json::json!({"id":""}));
+}
+#[test]
+fn rejects_missing_card_id() {
+    rejects_card_id(serde_json::json!({}));
+}
+#[test]
+fn rejects_zero_card_id() {
+    rejects_card_id(serde_json::json!({"id":0}));
+}
+#[test]
+fn rejects_negative_card_id() {
+    rejects_card_id(serde_json::json!({"id":-1}));
+}
+#[test]
+fn rejects_fractional_card_id() {
+    rejects_card_id(serde_json::json!({"id":1.5}));
+}
+#[test]
+fn rejects_wrong_type_card_id() {
+    rejects_card_id(serde_json::json!({"id":true}));
 }
