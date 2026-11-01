@@ -624,6 +624,7 @@ fn plan_rejects_stdin_aliases_and_non_regular_files_before_opening() {
     let alias = dir.path().join("stdin-link");
     std::os::unix::fs::symlink("/dev/stdin", &alias).unwrap();
     let paths = vec![
+        std::path::PathBuf::from("/dev/fd/0"),
         std::path::PathBuf::from("/dev/stdin"),
         alias,
         fifo,
