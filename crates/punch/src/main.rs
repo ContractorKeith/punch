@@ -80,6 +80,9 @@ fn main() -> ExitCode {
                 println!("{}", reply.value);
             } else {
                 cli::print_text(&reply.value["data"]);
+                for warning in reply.value["warnings"].as_array().into_iter().flatten() {
+                    eprintln!("{}", warning.as_str().unwrap_or(""));
+                }
             }
             ExitCode::from(reply.exit_code)
         }

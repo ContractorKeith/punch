@@ -63,8 +63,9 @@ fn set_claim(
     } else {
         None
     };
-    store.transaction(|repo| {
+    super::bc::mutate_task(store, |repo| {
         // Re-read local fields after the remote call so concurrent local edits survive.
+
         let old = resolve(&repo.tasks()?, reference)?.clone();
         let mut changed = false;
         if let Some((project, item, linked)) = &fetched {

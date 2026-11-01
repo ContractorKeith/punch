@@ -207,6 +207,8 @@ fn catalog_matches_cli_operations_and_exposes_flag_schemas() {
             "add",
             "add_plan",
             "archive",
+            "bc_link",
+            "bc_status",
             "claim",
             "edit",
             "guide",
@@ -243,9 +245,22 @@ fn catalog_matches_cli_operations_and_exposes_flag_schemas() {
         if matches!(name, "board" | "mcp" | "setup") {
             continue;
         }
-        if name == "project" {
-            for child in ["add", "list", "archive"] {
-                assert!(names.contains(&format!("project_{child}").as_str()));
+        if matches!(name, "project" | "bc") {
+            let help = command(&dir)
+                .args([name, "--help"])
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let help = String::from_utf8(help).unwrap();
+            for child in help
+                .lines()
+                .filter_map(|line| line.strip_prefix("  "))
+                .filter_map(|line| line.split_whitespace().next())
+                .filter(|child| !child.starts_with('-') && *child != "help")
+            {
+                assert!(names.contains(&format!("{name}_{child}").as_str()));
             }
         } else {
             assert!(names.contains(&name), "missing tool for {name}");
@@ -836,6 +851,60 @@ fn readme_states_fetched_at_only_changed_false_once() {
 }
 
 #[test]
+fn basecamp_tools_read_status_and_refuse_agent_link_without_changing_configuration() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    // Linking and status are local operations; no Basecamp service is contacted.
+    command(&dir)
+        .args([
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "123",
+            "--card-table",
+            "456",
+            "--map",
+            "todo=10,doing=20",
+        ])
+        .assert()
+        .success();
+    let output = command(&dir)
+        .args(["--json", "bc", "status", "-p", "demo"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let before: Value = serde_json::from_slice(&output).unwrap();
+    let replies = session(
+        &dir,
+        &[
+            initialize(),
+            call(2, "bc_status", json!({"project":"demo"})),
+            call(
+                3,
+                "bc_link",
+                json!({"project":"demo","bucket":"999","card-table":"888","map":"todo=90"}),
+            ),
+            call(4, "bc_status", json!({"project":"demo"})),
+        ],
+    );
+    assert_eq!(envelope(&replies[1]), before);
+    assert_eq!(replies[1]["result"]["isError"], false);
+    assert_eq!(
+        envelope(&replies[2])["refusals"][0]["code"],
+        "agent-cannot-manage-projects"
+    );
+    assert_eq!(replies[2]["result"]["isError"], true);
+    assert_eq!(envelope(&replies[3]), before);
+}
+
+#[test]
 fn reserved_number_objects_are_invalid_ids() {
     for id in [
         r#"{"$serde_json::private::Number":"1"}"#,
@@ -930,6 +999,100 @@ fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
         assert_eq!(envelope(&replies[2])["data"]["title"], "small");
         assert_eq!(replies[3]["result"], json!({}));
     }
+}
+
+#[test]
+fn basecamp_tools_preserve_wire_object_argument_types() {
+    let dir = TempDir::new().unwrap();
+    for name in ["bc_status", "bc_link"] {
+        let replies = raw_session(
+            &dir,
+            format!(
+                "{}\n{{\"jsonrpc\":\"2.0\",\"id\":{{\"$serde_json::private::Number\":\"2\"}},\"method\":\"tools/call\",\"params\":{{\"name\":\"{name}\",\"arguments\":{{}}}}}}\n",
+                initialize()
+            ),
+        );
+        assert_eq!(replies[1]["id"], Value::Null);
+        assert_eq!(replies[1]["error"]["code"], -32600);
+    }
+
+    let replies = raw_session(
+        &dir,
+        format!(
+            "{}\n{}\n{}\n{}\n",
+            initialize(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"bc_status","arguments":{"project":{"$serde_json::private::Number":"1"}}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bc_link","arguments":{"project":"demo","bucket":{"$serde_json::private::Number":"1"},"card-table":"456","map":"todo=10"}}}"#,
+            json!({"jsonrpc":"2.0","id":4,"method":"ping"})
+        ),
+    );
+    for reply in &replies[1..3] {
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(envelope(reply)["refusals"][0]["code"], "invalid-input");
+    }
+    assert_eq!(replies[3]["result"], json!({}));
+}
+
+#[test]
+fn basecamp_status_result_obeys_four_mib_cap_and_recovers() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    let plan = dir.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        json!([{"project":"demo","title":"large","notes":"x".repeat(2_100_000)}]).to_string(),
+    )
+    .unwrap();
+    command(&dir)
+        .args(["add", "--file", plan.to_str().unwrap()])
+        .assert()
+        .success();
+    // Link only after adding: fixture setup never invokes a remote adapter.
+    command(&dir)
+        .args([
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "123",
+            "--card-table",
+            "456",
+            "--map",
+            "todo=10",
+        ])
+        .assert()
+        .success();
+    let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+    db.execute(
+        "INSERT INTO basecamp_cards(task_id,card_id,dirty,last_error) VALUES(1,'',1,'fixture')",
+        [],
+    )
+    .unwrap();
+    let replies = session(
+        &dir,
+        &[
+            initialize(),
+            call(2, "bc_status", json!({"project":"demo"})),
+            call(3, "project_list", json!({})),
+            json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+        ],
+    );
+    assert_eq!(replies[1]["result"]["isError"], true);
+    let refusal = envelope(&replies[1]);
+    assert_eq!(refusal["refusals"][0]["code"], "invalid-input");
+    assert!(
+        refusal["refusals"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exceeded 4 MiB")
+    );
+    assert!(replies[1]["result"].to_string().len() <= 4 * 1024 * 1024);
+    assert_eq!(envelope(&replies[2])["ok"], true);
+    assert_eq!(replies[3]["result"], json!({}));
 }
 
 #[test]

@@ -19,7 +19,7 @@ pub fn edit(
     reference: &str,
     args: Edit,
 ) -> Result<Outcome<Task>, PunchError> {
-    store.transaction(|repo| {
+    super::bc::mutate_task(store, |repo| {
         validate_fields(
             args.title.as_deref(),
             args.priority,

@@ -646,13 +646,14 @@ fn slow_sync_keeps_reads_and_local_add_available() {
     isolated(|| {
         use punch_core::github::RealGh;
         use std::time::{Duration, Instant};
-        let (dir, store) = setup();
+        let (dir, _store) = setup();
         std::env::set_current_dir(dir.path()).unwrap();
         // The child gh signals after sync has reached the external boundary.
         let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
         std::fs::write(state.join("slow"), "").unwrap();
+        let worker_root = dir.path().to_path_buf();
         let worker = std::thread::spawn(move || {
-            let mut store = store;
+            let mut store = Store::open_at(&worker_root).unwrap();
             ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap()
         });
         let start = Instant::now();
@@ -862,7 +863,9 @@ fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
                 let _ = std::fs::remove_file(state.join(name));
             }
             std::fs::write(state.join("slow"), "").unwrap();
+            let worker_root = dir.path().to_path_buf();
             let worker = std::thread::spawn(move || {
+                let mut store = Store::open_at(&worker_root).unwrap();
                 if unclaim {
                     ops::unclaim(&mut store, &Actor::Person, &RealGh, "demo#14895")
                 } else {
@@ -890,7 +893,10 @@ fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
             assert!(note.is_ok(), "{note:?}");
             assert!(elapsed < Duration::from_secs(2));
             assert!(result.data.notes.contains("concurrent edit"));
-            assert_eq!(result.data.revision, note.unwrap().data.revision + 1);
+            assert_eq!(
+                result.data.revision,
+                note.unwrap().data.revision.checked_add(1).unwrap()
+            );
             assert_eq!(
                 result.data.slot.as_deref(),
                 if unclaim { None } else { Some("new") }

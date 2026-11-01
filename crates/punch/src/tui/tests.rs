@@ -757,3 +757,46 @@ fn editor_documentation_requires_waiting_for_the_file_to_close() {
         );
     }
 }
+
+#[test]
+fn board_move_shows_basecamp_failure_and_keeps_the_local_change() {
+    isolated(|dir| {
+        use std::os::unix::fs::PermissionsExt;
+        let mut store = seed();
+        let bin = dir.join("fake-bin");
+        std::fs::create_dir(&bin).unwrap();
+        let executable = bin.join("basecamp");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\necho mirror-unavailable >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        // This test runs in its own process; every Basecamp call resolves to the fake.
+        unsafe { std::env::set_var("PATH", path) };
+        ops::bc_link(
+            &mut store,
+            &Actor::Person,
+            ops::BcLink {
+                project: "alpha".into(),
+                bucket_id: "123".into(),
+                card_table_id: "456".into(),
+                column_map: [("todo".into(), "10".into()), ("doing".into(), "20".into())].into(),
+            },
+        )
+        .unwrap();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        let snapshot = board.selected().unwrap().clone();
+        board.apply(&mut store, &snapshot, ops::Update::Move(Column::Doing));
+        let status = board.status_text().unwrap();
+        assert!(status.contains("basecamp-failed"), "{status}");
+        assert!(status.contains("mirror-unavailable"), "{status}");
+        let task = ops::show(&mut store, &Actor::Person, &snapshot.reference())
+            .unwrap()
+            .data;
+        assert_eq!(task.column, Column::Doing);
+        assert_eq!(task.revision, snapshot.revision.checked_add(1).unwrap());
+        assert!(task.basecamp_card.unwrap().dirty);
+    });
+}

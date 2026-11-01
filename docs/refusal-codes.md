@@ -23,7 +23,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
 | `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs/revisions. Read back before retrying a write. Exit 3. |
 | `offline` | A GitHub call failed with a network error; the message preserves gh stderr. Claim/unclaim leave local state unchanged. Exit 1. |
-| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data or PR draft/review fields; the message includes its stderr when gh failed. Claim/unclaim leave local state unchanged. Exit 1. |
+| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data or PR draft/review fields; the message includes captured stderr, including on timeout. Captured streams are limited to 1 MiB and excess output is reported as truncated. Claim/unclaim leave local state unchanged. Exit 1. |
 
 Success, including a no-op, exits 0. A successful JSON result has exactly
 `ok`, `changed`, `data`, and `warnings`. Task creation returns
@@ -44,6 +44,18 @@ Sync reports a success envelope with per-project
 `failed`; each project's import is atomic. Any failed project makes the command
 exit 3, while successful projects remain committed. An unlinked or archived
 project is skipped. An unknown `-p` project returns `unknown-project`, exit 1.
+
+Basecamp uses warning codes in successful outcomes; these do not change the
+operation's exit code:
+
+| code | meaning |
+|---|---|
+| `basecamp-failed` | The mirror failed; the task remains committed, with a dirty card and last error for retry on sync. Timeout diagnostics include captured stderr; credentials are redacted, including JSON string escapes and line breaks around separators. |
+| `basecamp-unmapped` | The task's column has no Basecamp mapping; the mirror is skipped. |
+
+`bc link` also uses `agent-cannot-manage-projects` when called by an agent.
+`bc status` is readable by any actor. Basecamp-only projects still reconcile
+during sync, even though the per-project result array describes GitHub pulls.
 
 MCP reuses these refusal codes and the CLI JSON envelope. Refusals are tool
 results with `isError: true`, not JSON-RPC errors. Partial plans and partial

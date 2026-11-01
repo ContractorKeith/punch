@@ -22,4 +22,5 @@ operation!(plan);
 
 operation!(sync);
 operation!(claim);
+operation!(bc);
 operation!(update);

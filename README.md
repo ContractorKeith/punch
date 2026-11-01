@@ -89,6 +89,48 @@ actor label (`person` or the agent's identity) as assignee; `--slot` sets the
 slot separately, defaulting to the agent identity. Unclaim clears the local
 assignee and slot; GitHub assignees always come from the refreshed card.
 
+## Basecamp mirror
+
+Link a local project to an existing Basecamp card table (person only):
+
+```bash
+punch bc link -p demo --bucket 123 --card-table 456 --map todo=10,doing=20,review=30,blocked=40,done=50,shipped=60
+punch bc status -p demo --json
+punch sync -p demo
+```
+
+Basecamp access uses the installed `basecamp` CLI (0.21.0) and its authentication.
+Linking saves configuration locally; the next sync creates cards for existing
+tasks. New tasks and changes to title, column, or slot mirror automatically.
+Titles are `#7 · worker-1 · Title` for GitHub cards and `t12 · Title` for local
+tasks, omitting empty slots. Unmapped columns produce `basecamp-unmapped` warnings.
+
+The local task and dirty mirror intent commit before any Basecamp call; no
+transaction stays open while the CLI runs. Each call has a 30-second timeout.
+Failures produce `basecamp-failed` warnings while the task operation succeeds.
+Credentials in diagnostics are redacted before warnings or storage. Quoted JSON
+values honor string escapes, and whitespace around credential separators may
+include line breaks. Each diagnostic is limited to 2 KiB. Each captured stream
+is capped at 1 MiB; excess output is drained and reported as truncated. A timeout
+kills the process group and includes stderr received before the deadline.
+Status shows mapped columns, dirty cards, and their last errors. Failed creates
+have an empty card ID until retried. A store claim serializes creation across
+processes; after a crash, sync can retry once the five-minute claim expires.
+A late creator preserves a newer stored card ID and trashes its duplicate.
+Before creating, punch lists the complete
+card table and adopts an exact-title match, recovering a remote create that
+succeeded before punch crashed. Sync reconciles all non-archived tasks in
+linked, active projects after the GitHub pull, including local-only projects;
+it retries failures without bumping task revisions. A fetch timestamp alone
+keeps `changed=false` and preserves revisions. A changed mirror record (such as
+a successful retry) sets the overall sync `changed=true`; the per-project
+results continue to describe GitHub imports.
+
+Relinking to another bucket or card table clears every local card association,
+including archived tasks, because old card IDs belong to the old table. Archived
+tasks receive no remote calls; the next sync mirrors active tasks at the new destination. Existing remote cards are left
+in place. Changing only the column map retains card IDs.
+
 ## MCP and agent guide
 
 ```bash
@@ -99,7 +141,7 @@ punch setup codex
 ```
 
 `mcp` serves newline-delimited JSON-RPC on stdin/stdout synchronously. It exposes
-17 tools for the available CLI operations, including `guide`, `project_add`,
+19 tools for the available CLI operations, including `guide`, `project_add`,
 `project_list`, `project_archive`, and `add_plan` (the `add --file` operation).
 Tools share CLI validation and JSON envelopes. Results include the envelope as
 both `structuredContent` and JSON text in `content`; refusals and partial
@@ -120,8 +162,10 @@ small successful identity receipt (task ref and revision for task operations)
 with `result-truncated: result exceeded 4 MiB; use show to read it`.
 Larger read results return an `isError: true`
 `invalid-input` refusal: narrow the request with a project filter, a limit,
-or show a single task. The server continues with the next request. Basecamp
-tools arrive in phase 5.
+or show a single task. The server continues with the next request.
+`bc_status` reads mirror status; `bc_link` is exposed for parity but core ops
+refuse every MCP agent with `agent-cannot-manage-projects` because linking is
+person-only.
 
 Request ids must be strings or integers fitting i64 or u64 and are echoed
 exactly. Null, fractional, and out-of-range ids return Invalid Request with a

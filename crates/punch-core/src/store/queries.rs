@@ -269,3 +269,77 @@ impl Repository<'_> {
         Ok(true)
     }
 }
+
+impl Repository<'_> {
+    pub(crate) fn basecamp_links(&self) -> Result<Vec<BasecampLink>, PunchError> {
+        let rows = self.db.prepare("SELECT project_id,bucket_id,card_table_id,column_map FROM basecamp_links ORDER BY project_id")?
+            .query_map([], |r| Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))?
+            .collect::<Result<Vec<_>,_>>()?;
+        rows.into_iter()
+            .map(|(project_id, bucket_id, card_table_id, json)| {
+                Ok(BasecampLink {
+                    project_id,
+                    bucket_id,
+                    card_table_id,
+                    column_map: serde_json::from_str(&json).map_err(PunchError::storage)?,
+                })
+            })
+            .collect()
+    }
+    pub(crate) fn save_basecamp_link(&self, link: &BasecampLink) -> Result<(), PunchError> {
+        self.db.execute("INSERT INTO basecamp_links(project_id,bucket_id,card_table_id,column_map) VALUES(?1,?2,?3,?4) ON CONFLICT(project_id) DO UPDATE SET bucket_id=excluded.bucket_id,card_table_id=excluded.card_table_id,column_map=excluded.column_map",
+            params![link.project_id,link.bucket_id,link.card_table_id,serde_json::to_string(&link.column_map).map_err(PunchError::storage)?])?;
+        Ok(())
+    }
+}
+
+impl Repository<'_> {
+    pub(crate) fn save_basecamp_card(
+        &self,
+        task_id: i64,
+        card: &BasecampCard,
+    ) -> Result<bool, PunchError> {
+        let changed = self.db.execute("INSERT INTO basecamp_cards(task_id,card_id,dirty,last_error) VALUES(?1,?2,?3,?4) ON CONFLICT(task_id) DO UPDATE SET card_id=excluded.card_id,dirty=excluded.dirty,last_error=excluded.last_error WHERE card_id!=excluded.card_id OR dirty!=excluded.dirty OR last_error IS NOT excluded.last_error",
+            params![task_id,card.card_id,card.dirty,card.last_error])?;
+        Ok(changed != 0)
+    }
+}
+
+impl Repository<'_> {
+    pub(crate) fn clear_basecamp_cards(&self, project_id: i64) -> Result<(), PunchError> {
+        self.db.execute("DELETE FROM basecamp_cards WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?1)", [project_id])?;
+        Ok(())
+    }
+}
+
+impl Repository<'_> {
+    pub(crate) fn claim_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<bool, PunchError> {
+        Ok(self.db.execute("UPDATE basecamp_cards SET create_claim=?2 WHERE task_id=?1 AND card_id='' AND (create_claim IS NULL OR julianday(create_claim) < julianday('now', '-5 minutes'))", params![task_id, claim])? != 0)
+    }
+    pub(crate) fn owns_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<bool, PunchError> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM basecamp_cards WHERE task_id=?1 AND create_claim=?2)",
+            params![task_id, claim],
+            |r| r.get(0),
+        )?)
+    }
+    pub(crate) fn release_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<(), PunchError> {
+        self.db.execute(
+            "UPDATE basecamp_cards SET create_claim=NULL WHERE task_id=?1 AND create_claim=?2",
+            params![task_id, claim],
+        )?;
+        Ok(())
+    }
+}

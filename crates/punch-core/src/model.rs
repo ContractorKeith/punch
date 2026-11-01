@@ -144,3 +144,11 @@ impl<T> Outcome<T> {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BasecampLink {
+    pub project_id: i64,
+    pub bucket_id: String,
+    pub card_table_id: String,
+    pub column_map: std::collections::BTreeMap<String, String>,
+}
