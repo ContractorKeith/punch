@@ -622,15 +622,15 @@ fn plan_rejects_stdin_aliases_and_non_regular_files_before_opening() {
     );
     let alias = dir.path().join("stdin-link");
     std::os::unix::fs::symlink("/dev/stdin", &alias).unwrap();
-    let mut paths = vec![
+    let paths = vec![
         std::path::PathBuf::from("/dev/stdin"),
         alias,
         fifo,
         "/dev/null".into(),
         dir.path().to_owned(),
+        #[cfg(target_os = "linux")]
+        "/proc/self/fd/0".into(),
     ];
-    #[cfg(target_os = "linux")]
-    paths.push("/proc/self/fd/0".into());
     for path in paths {
         let replies = live_plan_session(&dir, &path);
         assert_eq!(replies[1]["result"]["isError"], true, "{}", path.display());
