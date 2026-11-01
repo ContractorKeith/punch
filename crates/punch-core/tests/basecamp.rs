@@ -820,3 +820,30 @@ fn diagnostics_are_capped_at_two_kib_after_redaction() {
         assert!(direct.len() <= 2048);
     });
 }
+
+#[test]
+fn destination_change_clears_archived_associations_without_remote_calls() {
+    isolated(|| {
+        let (mut store, fake) = setup();
+        let task = add(&mut store);
+        assert_eq!(task.basecamp_card.unwrap().card_id, "99");
+        ops::archive(&mut store, &Actor::Person, "t1").unwrap();
+        fake.calls.borrow_mut().clear();
+        ops::bc_link(
+            &mut store,
+            &Actor::Person,
+            ops::BcLink {
+                project: "demo".into(),
+                bucket_id: "11".into(),
+                card_table_id: "21".into(),
+                column_map: [("todo".into(), "31".into())].into(),
+            },
+        )
+        .unwrap();
+        let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        assert!(task.archived);
+        assert!(task.basecamp_card.is_none());
+        ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+        assert!(fake.calls.borrow().is_empty());
+    });
+}

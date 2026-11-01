@@ -237,6 +237,7 @@ project, an unknown task, or create a cycle. Refusals: `after-self`,
   `dirty=1` and `last_error`, and the next `sync` retries dirty cards.
 - `sync` reconciles every non-archived task of a linked project after the
   GitHub pull. Archived tasks are left alone.
+- Changing the Basecamp destination clears every card association, including archived tasks, because card IDs belong to the old table; archived tasks receive no remote calls.
 - Columns without a mapping are skipped with a warning `basecamp-unmapped`.
 - Tests use a fake implementation and a fake `basecamp` script on `PATH`. No
   writes to any real Basecamp project during development or tests.
