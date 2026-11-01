@@ -577,3 +577,66 @@ fn panic_hook_restores_terminal_before_the_previous_hook() {
         assert_eq!(*output.lock().unwrap(), b"\x1b[?25h\x1b[?1049l");
     });
 }
+
+#[test]
+fn detail_pane_snapshot_shows_all_task_and_github_fields() {
+    isolated(|_| {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut store = seed();
+        ops::move_task(&mut store, &Actor::Person, "t2", Column::Doing).unwrap();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        let task = board.tasks.iter_mut().find(|t| t.id == 1).unwrap();
+        task.title = "Inspect the complete detail pane".into();
+        task.priority = Priority(1);
+        task.due = Some("2026-12-01".into());
+        task.assignee = Some("keith".into());
+        task.slot = Some("board-agent".into());
+        task.after = vec![2];
+        task.notes = "Check every field\nKeep the second note line".into();
+        task.gh_cache = Some(GhCache {
+            state: "OPEN".into(),
+            assignees: vec!["keith".into()],
+            is_draft: None,
+            review_decision: None,
+            linked_pr_number: None,
+            linked_pr_state: None,
+            linked_pr_draft: None,
+            linked_pr_review: None,
+            url: "https://github.com/example/demo/issues/42".into(),
+            fetched_at: "2026-11-01T12:34:56Z".into(),
+        });
+        board.key(Enter.into(), &mut store);
+        let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
+        terminal.draw(|f| super::view::draw(f, &board)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = (0..26)
+            .map(|y| {
+                let line: String = (0..100).map(|x| buffer[(x, y)].symbol()).collect();
+                format!("{}\n", line.trim_end())
+            })
+            .collect::<String>();
+        for field in [
+            "Inspect the complete detail pane",
+            "Ref: t1",
+            "Project: alpha",
+            "Column: todo",
+            "Priority: 1",
+            "Due: 2026-12-01",
+            "Assignee: keith",
+            "Slot: board-agent",
+            "Dependencies:",
+            "t2 [doing] Write docs",
+            "Notes:",
+            "Check every field",
+            "Keep the second note line",
+            "GitHub: https://github.com/example/demo/issues/42",
+            "Fetched: 2026-11-01T12:34:56Z",
+        ] {
+            assert!(
+                text.contains(field),
+                "missing detail field: {field}\n{text}"
+            );
+        }
+        check_snapshot("detail", text, include_str!("snapshots/detail.txt"));
+    });
+}
