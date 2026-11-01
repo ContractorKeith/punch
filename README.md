@@ -47,8 +47,7 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. The board, MCP, and Basecamp integration arrive in later
-phases.
+temporary directory. The board and MCP arrive in later phases.
 
 ## GitHub sync and claims
 
@@ -98,15 +97,22 @@ tasks. New tasks and changes to title, column, or slot mirror automatically.
 Titles are `#7 · worker-1 · Title` for GitHub cards and `t12 · Title` for local
 tasks, omitting empty slots. Unmapped columns produce `basecamp-unmapped` warnings.
 
+The local task and dirty mirror intent commit before any Basecamp call; no
+transaction stays open while the CLI runs. Each call has a 30-second timeout.
 Failures produce `basecamp-failed` warnings while the task operation succeeds.
+Credentials in diagnostics are redacted before warnings or storage, and each
+diagnostic is limited to 2 KiB.
 Status shows mapped columns, dirty cards, and their last errors. Failed creates
-have an empty card ID until retried. Sync reconciles all non-archived tasks in
+have an empty card ID until retried. Before creating, punch lists the complete
+card table and adopts an exact-title match, recovering a remote create that
+succeeded before punch crashed. Sync reconciles all non-archived tasks in
 linked, active projects after the GitHub pull, including local-only projects;
 it retries failures without bumping task revisions. A fetch timestamp alone
 keeps `changed=false` and preserves revisions. A changed mirror record (such as
 a successful retry) sets the overall sync `changed=true`; the per-project
 results continue to describe GitHub imports.
 
-Relinking to another bucket or card table clears local card associations so the
-next sync creates cards at the new destination. Existing remote cards are left
+Relinking to another bucket or card table clears every local card association,
+including archived tasks, because old card IDs belong to the old table. Archived
+tasks receive no remote calls; the next sync mirrors active tasks at the new destination. Existing remote cards are left
 in place. Changing only the column map retains card IDs.

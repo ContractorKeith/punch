@@ -635,7 +635,15 @@ fn hung_basecamp_commits_locally_keeps_store_available_and_times_out() {
         let worker = std::thread::spawn(|| {
             let mut store = Store::open().unwrap();
             let start = Instant::now();
-            let task = add(&mut store);
+            let out = ops::add(
+                &mut store,
+                &Actor::Person,
+                serde_json::from_value(serde_json::json!({"project":"demo", "title":"Fix it"}))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(out.warnings[0].starts_with("basecamp-failed:"));
+            let task = out.data.task;
             assert!(start.elapsed() >= Duration::from_secs(30));
             assert!(start.elapsed() < Duration::from_secs(35));
             task

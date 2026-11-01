@@ -11,20 +11,19 @@ pub(crate) fn run_command(
         process::Stdio,
         time::{Duration, Instant},
     };
-    let failed = |e: String| e;
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| failed(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| failed("missing process stdout".into()))?;
+        .ok_or_else(|| "missing process stdout".to_owned())?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| failed("missing process stderr".into()))?;
+        .ok_or_else(|| "missing process stderr".to_owned())?;
     let drain = |mut pipe: Box<dyn Read + Send>| {
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -44,10 +43,10 @@ pub(crate) fn run_command(
             result => {
                 let _ = child.kill();
                 let _ = child.wait();
-                // Do not wait on inherited pipes held by grandchildren after killing gh.
+                // Do not wait on inherited pipes held by grandchildren after killing the process.
                 return Err(match result {
-                    Err(e) => failed(e.to_string()),
-                    _ => failed(format!("process timeout after {} ms", timeout.as_millis())),
+                    Err(e) => e.to_string(),
+                    _ => format!("process timeout after {} ms", timeout.as_millis()),
                 });
             }
         }
@@ -58,11 +57,11 @@ pub(crate) fn run_command(
             .recv_timeout(timeout.saturating_sub(start.elapsed()))
             .map_err(|e| match e {
                 std::sync::mpsc::RecvTimeoutError::Timeout => {
-                    failed(format!("process timeout after {} ms", timeout.as_millis()))
+                    format!("process timeout after {} ms", timeout.as_millis())
                 }
-                _ => failed("process output reader failed".into()),
+                _ => "process output reader failed".into(),
             })?
-            .map_err(|e| failed(e.to_string()))
+            .map_err(|e| e.to_string())
     };
     Ok(std::process::Output {
         status,
