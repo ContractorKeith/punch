@@ -104,27 +104,22 @@ pub fn draw(frame: &mut Frame, board: &Board) {
     match &board.mode {
         Mode::Board => {}
         Mode::AddProject(index) => {
-            let text = board
+            let items: Vec<_> = board
                 .projects
                 .iter()
                 .filter(|p| !p.archived)
-                .enumerate()
-                .map(|(i, p)| {
-                    format!(
-                        "{} {} — {}",
-                        if i == *index { ">" } else { " " },
-                        p.slug,
-                        p.name
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            modal(
-                frame,
-                area,
-                "Add · choose project · j/k, Enter, Esc",
-                &text,
-                index.saturating_sub(5) as u16,
+                .map(|p| ListItem::new(format!("{} — {}", p.slug, p.name)))
+                .collect();
+            let rect = popup(area, 90, area.height.saturating_sub(2).max(3));
+            frame.render_widget(Clear, rect);
+            // ListState scrolls using the bordered list's actual inner height.
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::bordered().title("Add · choose project · j/k, Enter, Esc"))
+                    .highlight_symbol("> ")
+                    .highlight_style(Style::default().fg(Color::Cyan).bold()),
+                rect,
+                &mut ListState::default().with_selected(Some(*index)),
             );
         }
         Mode::Add { project, title } => modal(

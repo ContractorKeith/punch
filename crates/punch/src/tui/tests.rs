@@ -513,3 +513,42 @@ fn ctrl_c_quits_every_mode_and_modifier_chords_do_not_type() {
         assert_eq!(board.selected().unwrap().column, Column::Doing);
     });
 }
+
+#[test]
+fn add_project_selection_stays_visible_at_the_modal_height() {
+    isolated(|_| {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut store = Store::open().unwrap();
+        for i in 0..24 {
+            ops::project_add(
+                &mut store,
+                &Actor::Person,
+                ops::ProjectAdd {
+                    slug: format!("p{i:02}"),
+                    name: Some(format!("Project {i}")),
+                    github: None,
+                    scope: None,
+                },
+            )
+            .unwrap();
+        }
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.key(Char('a').into(), &mut store);
+        for (width, height) in [(60, 8), (200, 60), (30, 4)] {
+            for index in 0..24 {
+                board.mode = Mode::AddProject(index);
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal.draw(|f| super::view::draw(f, &board)).unwrap();
+                let buffer = terminal.backend().buffer();
+                let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
+                assert!(
+                    text.contains(&format!("> p{index:02}")),
+                    "{width}x{height}: selection {index} hidden"
+                );
+            }
+        }
+        board.mode = Mode::AddProject(10);
+        board.key(Enter.into(), &mut store);
+        assert!(matches!(board.mode, Mode::Add { ref project, .. } if project == "p10"));
+    });
+}
