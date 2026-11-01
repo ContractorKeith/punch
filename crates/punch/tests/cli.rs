@@ -562,3 +562,28 @@ fn board_json_stays_noninteractive_and_nonterminal_board_refuses_cleanly() {
         .stderr("invalid-input: the board requires a terminal; use list --json for agents\n");
     run(&dir, &["board"]).code(2);
 }
+
+#[test]
+fn board_documentation_describes_current_entrypoints_once() {
+    let readme = include_str!("../../../README.md");
+    let contract = include_str!("../../../docs/refusal-codes.md");
+    assert_eq!(
+        readme
+            .matches("Bare `punch` and `punch board` open")
+            .count(),
+        1
+    );
+    assert!(readme.contains("Ctrl-C"));
+    assert!(!readme.contains("Bare `punch` prints help"));
+    assert!(!readme.contains("synchronization, the board"));
+    assert!(!readme.contains("phase 2"));
+    assert_eq!(
+        contract
+            .matches("Without a subcommand, an interactive terminal opens the board.")
+            .count(),
+        1
+    );
+    assert!(!contract.contains("Without a subcommand, punch prints help"));
+    assert!(contract.contains("bare `punch --json`"));
+    assert!(contract.contains("`punch board --json` exits 2"));
+}

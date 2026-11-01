@@ -53,7 +53,8 @@ temporary directory. GitHub synchronization, MCP, and Basecamp integration are p
 
 Bare `punch` and `punch board` open the interactive board in a terminal.
 Use `h/l` for columns, `j/k` for cards, `p` for projects, `/` for text filtering,
-`Enter` for details, `?` for help, and `q` to quit. Narrow terminals show the
+`Enter` for details, `?` for help, and `q` to quit. Ctrl-C quits from any mode
+and restores the terminal. Narrow terminals show the
 focused column and as many neighbours as fit. External CLI changes reload once
 a second. `--json` remains noninteractive; agents should use `list --json`.
 

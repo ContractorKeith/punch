@@ -37,6 +37,7 @@ rolls back the entire plan and exits 3 with a refusal envelope.
 Help/version requests exit 0; with `--json`, their text is the success envelope's
 `data` string. `punch --help` prints help without opening a store.
 
-Without a subcommand, an interactive terminal opens the board. Bare
-`punch --json` retains the help envelope; `punch board --json` exits 2 because
-the board is interactive.
+Without a subcommand, an interactive terminal opens the board. With JSON,
+bare `punch --json` returns the help envelope; `punch board --json` exits 2
+because the board is interactive. Without a terminal, bare `punch` and
+`punch board` exit 2 with `invalid-input` before opening a store.
