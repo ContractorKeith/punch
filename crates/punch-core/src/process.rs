@@ -1,9 +1,31 @@
 //! Subprocess deadlines shared by external CLI adapters.
 use std::{os::unix::process::CommandExt, process::Command};
 
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+#[derive(Default)]
+struct Capture {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+impl Capture {
+    fn diagnostic(&self) -> String {
+        format!(
+            "{}{}",
+            if self.truncated {
+                "[output truncated at 1 MiB] "
+            } else {
+                ""
+            },
+            String::from_utf8_lossy(&self.bytes)
+        )
+    }
+}
+
 fn kill_group(id: u32) {
     let _ = Command::new("/bin/kill")
         .args(["-KILL", "--", &format!("-{id}")])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status();
 }
 
@@ -33,7 +55,7 @@ pub(crate) fn run_command(
         .take()
         .ok_or_else(|| "missing process stderr".to_owned())?;
     let drain = |mut pipe: Box<dyn Read + Send>| {
-        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Capture::default()));
         let captured = bytes.clone();
         let worker = std::thread::spawn(move || -> std::io::Result<()> {
             let mut buffer = [0; 8192];
@@ -43,10 +65,10 @@ pub(crate) fn run_command(
                     return Ok(());
                 }
                 // Only this reader and the final diagnostic snapshot access the buffer.
-                captured
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .extend_from_slice(&buffer[..count]);
+                let mut capture = captured.lock().unwrap_or_else(|e| e.into_inner());
+                let keep = count.min(OUTPUT_LIMIT.saturating_sub(capture.bytes.len()));
+                capture.bytes.extend_from_slice(&buffer[..keep]);
+                capture.truncated |= keep < count;
             }
         });
         (bytes, worker)
@@ -75,8 +97,17 @@ pub(crate) fn run_command(
     if let Some(error) = failure {
         kill_group(group);
         let _ = child.wait();
+        let stdout_truncated = stdout.lock().unwrap_or_else(|e| e.into_inner()).truncated;
         let bytes = stderr.lock().unwrap_or_else(|e| e.into_inner());
-        return Err(format!("{error}: {}", String::from_utf8_lossy(&bytes)));
+        return Err(format!(
+            "{error}: {}{}",
+            if stdout_truncated {
+                "[stdout truncated at 1 MiB] "
+            } else {
+                ""
+            },
+            bytes.diagnostic()
+        ));
     }
     for worker in [stdout_worker, stderr_worker] {
         worker
@@ -84,13 +115,22 @@ pub(crate) fn run_command(
             .map_err(|_| "process output reader failed".to_owned())?
             .map_err(|e| e.to_string())?;
     }
-    let snapshot = |bytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>| {
+    let snapshot = |bytes: std::sync::Arc<std::sync::Mutex<Capture>>| {
         std::mem::take(&mut *bytes.lock().unwrap_or_else(|e| e.into_inner()))
     };
+    let stdout = snapshot(stdout);
+    let stderr = snapshot(stderr);
+    if stdout.truncated || stderr.truncated {
+        return Err(format!(
+            "process output truncated at 1 MiB per stream: {}{}",
+            stderr.diagnostic(),
+            stdout.diagnostic()
+        ));
+    }
     Ok(std::process::Output {
         status: status.ok_or("missing process status")?,
-        stdout: snapshot(stdout),
-        stderr: snapshot(stderr),
+        stdout: stdout.bytes,
+        stderr: stderr.bytes,
     })
 }
 
@@ -98,6 +138,36 @@ pub(crate) fn run_command(
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[test]
+    fn large_output_is_bounded_and_reports_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        for stream in ["", " >&2"] {
+            let mut command = Command::new("sh");
+            command.env("PUNCH_STATE_DIR", dir.path()).args([
+                "-c",
+                &format!("head -c 4194304 /dev/zero{stream}; echo finished"),
+            ]);
+            let error = run_command(command, std::time::Duration::from_secs(3))
+                .expect_err("oversized output must fail");
+            assert!(
+                error.contains("truncated"),
+                "{}",
+                &error[..error.len().min(100)]
+            );
+            assert!(error.len() < 2 * 1024 * 1024 + 256);
+        }
+    }
+    #[test]
+    fn timeout_reports_truncated_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .env("PUNCH_STATE_DIR", dir.path())
+            .args(["-c", "head -c 4194304 /dev/zero; exec sleep 2"]);
+        let error = run_command(command, std::time::Duration::from_millis(200)).unwrap_err();
+        assert!(error.contains("timeout"));
+        assert!(error.contains("stdout truncated"), "{error}");
+    }
     #[test]
     fn timeout_preserves_stderr() {
         let dir = tempfile::tempdir().unwrap();
