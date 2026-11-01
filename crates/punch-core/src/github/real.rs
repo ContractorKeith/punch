@@ -8,11 +8,9 @@ use std::{collections::BTreeSet, process::Command};
 pub struct RealGh;
 impl RealGh {
     fn run(&self, args: &[&str]) -> Result<Vec<u8>, PunchError> {
-        let out = Command::new("gh")
-            .args(args)
-            .env("GH_PROMPT_DISABLED", "1")
-            .output()
-            .map_err(|e| PunchError::refusal(GH_FAILED, "gh", e))?;
+        let mut command = Command::new("gh");
+        command.args(args).env("GH_PROMPT_DISABLED", "1");
+        let out = run_command(command, std::time::Duration::from_secs(30))?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let lower = stderr.to_lowercase();
@@ -42,12 +40,21 @@ impl RealGh {
             .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh JSON: {e}")))
     }
     fn item(&self, mut value: Value, kind: Kind) -> Result<Item, PunchError> {
+        if value.get("kind").is_some_and(|v| *v != json!(kind)) {
+            return Err(PunchError::refusal(
+                GH_FAILED,
+                "gh",
+                "unexpected GitHub card kind",
+            ));
+        }
         value
             .as_object_mut()
             .ok_or_else(|| PunchError::refusal(GH_FAILED, "gh", "expected GitHub card object"))?
             .insert("kind".into(), json!(kind));
-        serde_json::from_value(value)
-            .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh card: {e}")))
+        let item: Item = serde_json::from_value(value)
+            .map_err(|e| PunchError::refusal(GH_FAILED, "gh", format!("invalid gh card: {e}")))?;
+        item.validate(kind, None)?;
+        Ok(item)
     }
     fn fields(kind: Kind) -> &'static str {
         if kind == Kind::Pr {
@@ -71,7 +78,18 @@ impl RealGh {
         );
         let mut cursor: Option<String> = None;
         let mut nodes = vec![];
+        let mut seen = BTreeSet::new();
+        let mut pages = 0;
         loop {
+            // Bound even walks that continually return fresh cursors (10,000 nodes).
+            if pages >= 100 {
+                return Err(PunchError::refusal(
+                    GH_FAILED,
+                    repo,
+                    "pagination page limit exceeded",
+                ));
+            }
+            pages += 1;
             let owner = format!("owner={owner}");
             let name = format!("name={name}");
             let number = format!("number={number}");
@@ -113,7 +131,7 @@ impl RealGh {
                 .as_str()
                 .ok_or_else(|| PunchError::refusal(GH_FAILED, repo, "missing pagination cursor"))?
                 .to_owned();
-            if cursor.as_ref() == Some(&next) {
+            if !seen.insert(next.clone()) {
                 return Err(PunchError::refusal(
                     GH_FAILED,
                     repo,
@@ -209,6 +227,7 @@ impl Gh for RealGh {
             Self::fields(kind),
         ])?;
         let mut item = self.item(value, kind)?;
+        item.validate(kind, Some(number))?;
         if kind == Kind::Pr {
             item.closes = self.closing(repo, number)?;
         }
@@ -254,5 +273,113 @@ impl Gh for RealGh {
             "@me",
         ])?;
         Ok(())
+    }
+}
+
+// Drain both pipes while polling: large gh responses must not block on pipe capacity.
+fn run_command(
+    mut command: Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, PunchError> {
+    use std::{
+        io::Read,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let failed = |e: String| PunchError::refusal(GH_FAILED, "gh", e);
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| failed(e.to_string()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| failed("missing gh stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| failed("missing gh stderr".into()))?;
+    let drain = |mut pipe: Box<dyn Read + Send>| {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = vec![];
+            let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+            let _ = send.send(result);
+        });
+        receive
+    };
+    let stdout = drain(Box::new(stdout));
+    let stderr = drain(Box::new(stderr));
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(10)),
+            result => {
+                let _ = child.kill();
+                let _ = child.wait();
+                // Do not wait on inherited pipes held by grandchildren after killing gh.
+                return Err(match result {
+                    Err(e) => failed(e.to_string()),
+                    _ => failed(format!("gh timeout after {} ms", timeout.as_millis())),
+                });
+            }
+        }
+    };
+    // A gh descendant can inherit a pipe even after gh exits; draining shares the deadline.
+    let collect = |receive: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>| {
+        receive
+            .recv_timeout(timeout.saturating_sub(start.elapsed()))
+            .map_err(|e| match e {
+                std::sync::mpsc::RecvTimeoutError::Timeout => {
+                    failed(format!("gh timeout after {} ms", timeout.as_millis()))
+                }
+                _ => failed("gh output reader failed".into()),
+            })?
+            .map_err(|e| failed(e.to_string()))
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: collect(stdout)?,
+        stderr: collect(stderr)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    #[test]
+    fn inherited_gh_output_pipes_obey_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .env("PUNCH_STATE_DIR", dir.path())
+            .args(["-c", "sleep 0.4 &"]);
+        let start = std::time::Instant::now();
+        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.code, GH_FAILED);
+        assert!(error.message.contains("timeout"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(300));
+    }
+    #[test]
+    fn hung_gh_is_killed_at_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("survived");
+        let mut command = Command::new("sh");
+        command.env("PUNCH_STATE_DIR", dir.path()).args([
+            "-c",
+            "sleep 0.4; touch \"$1\"",
+            "gh",
+            marker.to_str().unwrap(),
+        ]);
+        let start = std::time::Instant::now();
+        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.code, GH_FAILED);
+        assert!(error.message.contains("timeout"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(300));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(!marker.exists(), "the timed out gh survived");
     }
 }
