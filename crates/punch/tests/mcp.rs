@@ -866,3 +866,66 @@ fn reserved_number_objects_are_invalid_integer_arguments() {
     }
     assert_eq!(envelope(&replies[3])["data"], json!([]));
 }
+
+#[test]
+fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
+    fn show_with_notes(notes: &str) -> Vec<Value> {
+        let dir = TempDir::new().unwrap();
+        command(&dir)
+            .args(["project", "add", "demo"])
+            .assert()
+            .success();
+        let plan = dir.path().join("plan.json");
+        std::fs::write(
+            &plan,
+            json!([
+                {"project":"demo","title":"large","notes":notes},
+                {"project":"demo","title":"small"}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        command(&dir)
+            .args(["add", "--file", plan.to_str().unwrap()])
+            .assert()
+            .success();
+        session(
+            &dir,
+            &[
+                initialize(),
+                call(2, "show", json!({"reference":"t1"})),
+                call(3, "show", json!({"reference":"t2"})),
+                json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+            ],
+        )
+    }
+    let cap = 4 * 1024 * 1024;
+    let base = show_with_notes("")[1]["result"].to_string().len();
+    // Plain ASCII notes occur once in each envelope, so each byte adds two bytes.
+    let fitting_notes = (cap - base) / 2;
+    let fitting = show_with_notes(&"x".repeat(fitting_notes));
+    let result = &fitting[1]["result"];
+    assert_eq!(result["isError"], false);
+    assert!(matches!(result.to_string().len(), n if n == cap || n == cap - 1));
+    assert_eq!(
+        envelope(&fitting[1])["data"]["notes"]
+            .as_str()
+            .unwrap()
+            .len(),
+        fitting_notes
+    );
+    // Escaping quotes adds bytes beyond the raw note length, too.
+    for notes in ["x".repeat(fitting_notes + 1), "\"".repeat(900_000)] {
+        let replies = show_with_notes(&notes);
+        assert_eq!(replies[1]["result"]["isError"], true);
+        let refusal = envelope(&replies[1]);
+        assert_eq!(refusal["refusals"][0]["code"], "invalid-input");
+        let message = refusal["refusals"][0]["message"].as_str().unwrap();
+        for phrase in ["exceeded 4 MiB", "project filter", "limit", "single task"] {
+            assert!(message.contains(phrase), "{message}");
+        }
+        assert!(replies[1]["result"].to_string().len() <= cap);
+        assert_eq!(envelope(&replies[2])["data"]["title"], "small");
+        assert_eq!(replies[3]["result"], json!({}));
+    }
+}

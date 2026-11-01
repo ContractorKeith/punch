@@ -5,6 +5,7 @@ use serde_json::{Value, json, value::RawValue};
 use std::io::{BufRead, Read, Write};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+const MAX_TOOL_RESULT_BYTES: usize = 4 * 1024 * 1024;
 
 // Parse containers as raw tokens so serde_json's private number tag cannot turn
 // a wire object into a number. Genuine numeric tokens retain exact precision.
@@ -42,7 +43,14 @@ fn tool_result(result: Result<crate::cli::Reply, PunchError>) -> Value {
         Ok(reply) => (reply.value, reply.exit_code != 0),
         Err(e) => (json!({"ok":false,"refusals":[e.detail()]}), true),
     };
-    json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":failed})
+    let response = json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":failed});
+    // Count both envelopes and JSON escaping, rather than just the domain data.
+    if response.to_string().len() > MAX_TOOL_RESULT_BYTES {
+        return tool_result(Err(PunchError::usage(
+            "Tool result exceeded 4 MiB; narrow the request with a project filter, a limit, or show a single task",
+        )));
+    }
+    response
 }
 pub fn run(slot: &str) -> Result<(), PunchError> {
     let stdin = std::io::stdin();
