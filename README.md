@@ -27,6 +27,8 @@ Agents should pass `--json` and identify themselves with `--as <slot>` or
 `PUNCH_AGENT=<slot>`. Ops enforce agent permissions, including no finishing or
 archiving cards. Writes report `changed`; identical adds return `existing: true`.
 Notes append a timestamp and actor on every call and are not idempotent.
+Changes advance the task revision; an exhausted revision refuses the change
+with `storage-failed` (exit 3), leaving the task unchanged.
 Task references accept `t12`, `12`, or `project#566` for cached GitHub cards.
 
 Import a JSON array with `punch add --file plan.json` (or `--file -` for stdin):

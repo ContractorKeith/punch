@@ -1,5 +1,5 @@
 //! Person-only archive and unarchive operations.
-use super::{project::now, task::resolve};
+use super::{project::now, task::{bump_revision, resolve}};
 use crate::{error::*, model::*, store::Store};
 fn set_archived(
     store: &mut Store,
@@ -20,7 +20,7 @@ fn set_archived(
             return Ok(Outcome::new(false, task));
         }
         task.archived = archived;
-        task.revision += 1;
+        bump_revision(&mut task)?;
         task.updated_at = now()?;
         repo.save_task(&task)?;
         Ok(Outcome::new(true, task))
