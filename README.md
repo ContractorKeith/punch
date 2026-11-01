@@ -73,3 +73,32 @@ returns `offline` or `gh-failed`, preserving local fields. Local claims use the
 actor label (`person` or the agent's identity) as assignee; `--slot` sets the
 slot separately, defaulting to the agent identity. Unclaim clears the local
 assignee and slot; GitHub assignees always come from the refreshed card.
+
+## Basecamp mirror
+
+Link a local project to an existing Basecamp card table (person only):
+
+```bash
+punch bc link -p demo --bucket 123 --card-table 456 --map todo=10,doing=20,review=30,blocked=40,done=50,shipped=60
+punch bc status -p demo --json
+punch sync -p demo
+```
+
+Basecamp access uses the installed `basecamp` CLI (0.21.0) and its authentication.
+Linking saves configuration locally; the next sync creates cards for existing
+tasks. New tasks and changes to title, column, or slot mirror automatically.
+Titles are `#7 · worker-1 · Title` for GitHub cards and `t12 · Title` for local
+tasks, omitting empty slots. Unmapped columns produce `basecamp-unmapped` warnings.
+
+Failures produce `basecamp-failed` warnings while the task operation succeeds.
+Status shows mapped columns, dirty cards, and their last errors. Failed creates
+have an empty card ID until retried. Sync reconciles all non-archived tasks in
+linked, active projects after the GitHub pull, including local-only projects;
+it retries failures without bumping task revisions. A fetch timestamp alone
+keeps `changed=false` and preserves revisions. A changed mirror record (such as
+a successful retry) sets the overall sync `changed=true`; the per-project
+results continue to describe GitHub imports.
+
+Relinking to another bucket or card table clears local card associations so the
+next sync creates cards at the new destination. Existing remote cards are left
+in place. Changing only the column map retains card IDs.

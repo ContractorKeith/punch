@@ -55,7 +55,10 @@ pub fn sync(
             },
         });
     }
-    Ok(Outcome::new(results.iter().any(|r| r.changed), results))
+    let (mirror_changed, warnings) = super::bc::reconcile(store, project)?;
+    let mut outcome = Outcome::new(mirror_changed || results.iter().any(|r| r.changed), results);
+    outcome.warnings = warnings;
+    Ok(outcome)
 }
 fn sync_project(
     repo: &Repository<'_>,

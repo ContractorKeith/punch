@@ -43,3 +43,15 @@ Sync reports a success envelope with per-project
 `failed`; each project's import is atomic. Any failed project makes the command
 exit 3, while successful projects remain committed. An unlinked or archived
 project is skipped. An unknown `-p` project returns `unknown-project`, exit 1.
+
+Basecamp uses warning codes in successful outcomes; these do not change the
+operation's exit code:
+
+| code | meaning |
+|---|---|
+| `basecamp-failed` | The mirror failed; the task remains committed, with a dirty card and last error for retry on sync. |
+| `basecamp-unmapped` | The task's column has no Basecamp mapping; the mirror is skipped. |
+
+`bc link` also uses `agent-cannot-manage-projects` when called by an agent.
+`bc status` is readable by any actor. Basecamp-only projects still reconcile
+during sync, even though the per-project result array describes GitHub pulls.

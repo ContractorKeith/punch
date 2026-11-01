@@ -75,3 +75,6 @@ impl From<std::io::Error> for PunchError {
         Self::storage(value)
     }
 }
+
+pub const BASECAMP_FAILED: &str = "basecamp-failed";
+pub const BASECAMP_UNMAPPED: &str = "basecamp-unmapped";

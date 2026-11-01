@@ -7,7 +7,7 @@ pub fn move_task(
     reference: &str,
     column: Column,
 ) -> Result<Outcome<Task>, PunchError> {
-    store.transaction(|repo| {
+    super::bc::mutate_task(store, |repo| {
         let tasks = repo.tasks()?;
         let mut task = resolve(&tasks, reference)?.clone();
         if actor.is_agent() && column.finished() {

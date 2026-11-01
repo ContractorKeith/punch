@@ -113,5 +113,9 @@ pub(super) fn add_in(repo: &Repository<'_>, args: &Add) -> Result<Outcome<Added>
     ))
 }
 pub fn add(store: &mut Store, _actor: &Actor, args: Add) -> Result<Outcome<Added>, PunchError> {
-    store.transaction(|repo| add_in(repo, &args))
+    super::bc::mutate(
+        store,
+        |repo| add_in(repo, &args),
+        |data, tasks| super::bc::refresh_task(&mut data.task, tasks),
+    )
 }

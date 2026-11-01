@@ -12,8 +12,14 @@ const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
 
 pub struct Store {
     connection: Connection,
+    pub(crate) basecamp: std::rc::Rc<dyn crate::basecamp::Basecamp>,
 }
 impl Store {
+    /// Replace the external boundary for callers using fixtures.
+    pub fn with_basecamp(mut self, basecamp: std::rc::Rc<dyn crate::basecamp::Basecamp>) -> Self {
+        self.basecamp = basecamp;
+        self
+    }
     pub fn open() -> Result<Self, PunchError> {
         let root = match std::env::var_os("PUNCH_STATE_DIR") {
             Some(path) => PathBuf::from(path),
@@ -66,7 +72,10 @@ impl Store {
             tx.commit()?;
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            basecamp: std::rc::Rc::new(crate::basecamp::RealBasecamp),
+        })
     }
     /// Serialize reads and writes at the same consistent operation boundary.
     pub(crate) fn transaction<T>(

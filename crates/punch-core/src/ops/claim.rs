@@ -42,7 +42,7 @@ fn set_claim(
     claimed: bool,
     slot: Option<&str>,
 ) -> Result<Outcome<Task>, PunchError> {
-    store.transaction(|repo| {
+    super::bc::mutate_task(store, |repo| {
         let old = resolve(&repo.tasks()?, reference)?.clone();
         let mut changed = false;
         if old.kind != Kind::Local {

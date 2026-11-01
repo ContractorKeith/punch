@@ -14,6 +14,10 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    Bc {
+        #[command(subcommand)]
+        command: BcCommand,
+    },
     Sync {
         #[arg(short = 'p', long)]
         project: Option<String>,
@@ -134,6 +138,41 @@ pub enum ProjectCommand {
         slug: String,
     },
 }
+#[derive(Subcommand)]
+pub enum BcCommand {
+    Link {
+        #[arg(short = 'p', long)]
+        project: String,
+        #[arg(long)]
+        bucket: String,
+        #[arg(long)]
+        card_table: String,
+        #[arg(long = "map")]
+        column_map: String,
+    },
+    #[command(
+        about = "Show Basecamp links, mapped columns and dirty cards; agents should pass --json"
+    )]
+    Status {
+        #[arg(short = 'p', long)]
+        project: Option<String>,
+    },
+}
+fn parse_column_map(text: &str) -> Result<std::collections::BTreeMap<String, String>, PunchError> {
+    let mut map = std::collections::BTreeMap::new();
+    for entry in text.split(',') {
+        let (column, id) = entry
+            .split_once('=')
+            .ok_or_else(|| PunchError::usage("map must be column=ID,..."))?;
+        column.parse::<Column>()?;
+        if id.trim().is_empty() || map.insert(column.to_owned(), id.to_owned()).is_some() {
+            return Err(PunchError::usage(
+                "map needs nonempty IDs and unique columns",
+            ));
+        }
+    }
+    Ok(map)
+}
 pub struct Reply {
     pub value: serde_json::Value,
     pub exit_code: u8,
@@ -169,6 +208,26 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         .as_ref()
         .ok_or_else(|| PunchError::usage("missing command"))?
     {
+        Command::Bc { command } => match command {
+            BcCommand::Link {
+                project,
+                bucket,
+                card_table,
+                column_map,
+            } => present(ops::bc_link(
+                &mut store,
+                &actor,
+                ops::BcLink {
+                    project: project.clone(),
+                    bucket_id: bucket.clone(),
+                    card_table_id: card_table.clone(),
+                    column_map: parse_column_map(column_map)?,
+                },
+            )?),
+            BcCommand::Status { project } => {
+                present(ops::bc_status(&mut store, &actor, project.as_deref())?)
+            }
+        },
         Command::Sync { project } => {
             let out = ops::sync(
                 &mut store,
@@ -321,6 +380,32 @@ pub fn print_text(data: &serde_json::Value) {
         for item in items {
             print_text(item);
         }
+    } else if let Some(link) = data.get("link") {
+        println!(
+            "{}  bucket={}  card-table={}",
+            data["project"].as_str().unwrap_or(""),
+            link["bucket_id"].as_str().unwrap_or(""),
+            link["card_table_id"].as_str().unwrap_or("")
+        );
+        if let Some(map) = link["column_map"].as_object() {
+            for (column, id) in map {
+                println!("  {column}={}", id.as_str().unwrap_or(""));
+            }
+        }
+        for task in data["dirty_cards"].as_array().into_iter().flatten() {
+            println!(
+                "  t{} dirty card={} error={}",
+                task["id"],
+                task["basecamp_card"]["card_id"].as_str().unwrap_or(""),
+                task["basecamp_card"]["last_error"].as_str().unwrap_or("")
+            );
+        }
+    } else if data.get("bucket_id").is_some() {
+        println!(
+            "Basecamp linked: bucket={} card-table={}",
+            data["bucket_id"].as_str().unwrap_or(""),
+            data["card_table_id"].as_str().unwrap_or("")
+        );
     } else if let Some(task) = data.get("task") {
         if let Some(status) = data.get("status").and_then(|s| s.as_str()) {
             print!("{status}: ");

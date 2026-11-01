@@ -1,4 +1,5 @@
 //! Shared domain operations and persistence for punch adapters.
+pub mod basecamp;
 pub mod derive;
 pub mod error;
 pub mod github;

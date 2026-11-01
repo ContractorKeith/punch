@@ -629,3 +629,135 @@ fn github_cli_reports_partial_sync_and_claim_failures_without_local_changes() {
         }
     }
 }
+
+#[test]
+fn basecamp_link_status_and_agent_refusal_are_exposed() {
+    let dir = setup();
+    let args = [
+        "bc",
+        "link",
+        "-p",
+        "demo",
+        "--bucket",
+        "10",
+        "--card-table",
+        "20",
+        "--map",
+        "todo=30,doing=40",
+    ];
+    let out = json(&dir, &args);
+    assert!(out["changed"].as_bool().unwrap());
+    assert_eq!(json(&dir, &args)["changed"], false);
+    assert_eq!(
+        json(&dir, &["bc", "status", "-p", "demo"])["data"][0]["link"]["column_map"]["doing"],
+        "40"
+    );
+    assert!(
+        String::from_utf8_lossy(&run(&dir, &["bc", "status"]).success().get_output().stdout)
+            .contains("todo=30")
+    );
+    let mut agent = vec!["--json", "--as", "bot"];
+    agent.extend_from_slice(&args);
+    assert!(
+        String::from_utf8_lossy(&run(&dir, &agent).code(1).get_output().stdout)
+            .contains("agent-cannot-manage-projects")
+    );
+    run(
+        &dir,
+        &[
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "10",
+            "--card-table",
+            "20",
+            "--map",
+            "bogus=30",
+        ],
+    )
+    .code(2);
+    run(
+        &dir,
+        &[
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "10",
+            "--card-table",
+            "20",
+            "--map",
+            "todo=30,todo=40",
+        ],
+    )
+    .code(2);
+    assert!(
+        String::from_utf8_lossy(
+            &run(&dir, &["bc", "status", "--help"])
+                .success()
+                .get_output()
+                .stdout
+        )
+        .contains("agents should pass --json")
+    );
+}
+
+#[test]
+fn basecamp_failures_are_successful_json_warnings_and_visible_in_text_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = setup();
+    json(
+        &dir,
+        &[
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "10",
+            "--card-table",
+            "20",
+            "--map",
+            "todo=30",
+        ],
+    );
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let script = bin.join("basecamp");
+    std::fs::write(&script, "#!/bin/sh\necho 'fixture denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("punch").unwrap();
+    let output = cmd
+        .env("PUNCH_STATE_DIR", dir.path())
+        .env_remove("PUNCH_AGENT")
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .args(["--json", "add", "Fix it", "-p", "demo"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(output.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ok"], true);
+    assert!(
+        value["warnings"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("basecamp-failed:")
+    );
+    assert_eq!(value["data"]["task"]["basecamp_card"]["dirty"], true);
+    let text = run(&dir, &["bc", "status"])
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8_lossy(&text);
+    assert!(text.contains("t1 dirty card="));
+    assert!(text.contains("fixture denied"));
+}
