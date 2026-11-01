@@ -1,5 +1,5 @@
 //! Append-only timestamped notes.
-use super::{project::now, task::resolve};
+use super::{project::now, task::{bump_revision, resolve}};
 use crate::{error::PunchError, model::*, store::Store};
 pub fn note(
     store: &mut Store,
@@ -12,7 +12,7 @@ pub fn note(
         let timestamp = now()?;
         task.notes
             .push_str(&format!("\n[{timestamp} {}] {text}", actor.label()));
-        task.revision += 1;
+        bump_revision(&mut task)?;
         task.updated_at = timestamp;
         repo.save_task(&task)?;
         Ok(Outcome::new(true, task))

@@ -639,6 +639,7 @@ fn plan_rejects_stdin_aliases_and_non_regular_files_before_opening() {
     let alias = dir.path().join("stdin-link");
     std::os::unix::fs::symlink("/dev/stdin", &alias).unwrap();
     let paths = vec![
+        std::path::PathBuf::from("/dev/fd/0"),
         std::path::PathBuf::from("/dev/stdin"),
         alias,
         fifo,
@@ -901,4 +902,195 @@ fn basecamp_tools_read_status_and_refuse_agent_link_without_changing_configurati
     );
     assert_eq!(replies[2]["result"]["isError"], true);
     assert_eq!(envelope(&replies[3]), before);
+}
+
+#[test]
+fn reserved_number_objects_are_invalid_ids() {
+    for id in [
+        r#"{"$serde_json::private::Number":"1"}"#,
+        r#"{"\u0024serde_json::private::Number":"1"}"#,
+        r#"{"$serde_json::private::Number":"18446744073709551615","extra":0}"#,
+    ] {
+        assert_invalid_id(id);
+    }
+}
+
+#[test]
+fn reserved_number_objects_are_invalid_integer_arguments() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    let input = format!(
+        "{}\n{}\n{}\n{}\n",
+        initialize(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add","arguments":{"project":"demo","title":"bad","priority":{"$serde_json::private::Number":"1"}}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ready","arguments":{"limit":{"\u0024serde_json::private::Number":"1"}}}}"#,
+        call(4, "list", json!({}))
+    );
+    let replies = raw_session(&dir, input);
+    for reply in &replies[1..3] {
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(envelope(reply)["refusals"][0]["code"], "invalid-input");
+    }
+    assert_eq!(envelope(&replies[3])["data"], json!([]));
+}
+
+#[test]
+fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
+    fn show_with_notes(notes: &str) -> Vec<Value> {
+        let dir = TempDir::new().unwrap();
+        command(&dir)
+            .args(["project", "add", "demo"])
+            .assert()
+            .success();
+        let plan = dir.path().join("plan.json");
+        std::fs::write(
+            &plan,
+            json!([
+                {"project":"demo","title":"large","notes":notes},
+                {"project":"demo","title":"small"}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        command(&dir)
+            .args(["add", "--file", plan.to_str().unwrap()])
+            .assert()
+            .success();
+        session(
+            &dir,
+            &[
+                initialize(),
+                call(2, "show", json!({"reference":"t1"})),
+                call(3, "show", json!({"reference":"t2"})),
+                json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+            ],
+        )
+    }
+    let cap = 4 * 1024 * 1024;
+    let base = show_with_notes("")[1]["result"].to_string().len();
+    // Each ASCII note byte appears twice. Leave 256 bytes for varying RFC 3339
+    // fractional-second lengths between fixtures on either side of the cap.
+    let fitting_notes = (cap - base - 256) / 2;
+    let fitting = show_with_notes(&"x".repeat(fitting_notes));
+    let result = &fitting[1]["result"];
+    assert_eq!(result["isError"], false);
+    assert!((cap - 512..=cap).contains(&result.to_string().len()));
+    assert_eq!(
+        envelope(&fitting[1])["data"]["notes"]
+            .as_str()
+            .unwrap()
+            .len(),
+        fitting_notes
+    );
+    // Escaping quotes adds bytes beyond the raw note length, too.
+    for notes in ["x".repeat(fitting_notes + 256), "\"".repeat(900_000)] {
+        let replies = show_with_notes(&notes);
+        assert_eq!(replies[1]["result"]["isError"], true);
+        let refusal = envelope(&replies[1]);
+        assert_eq!(refusal["refusals"][0]["code"], "invalid-input");
+        let message = refusal["refusals"][0]["message"].as_str().unwrap();
+        for phrase in ["exceeded 4 MiB", "project filter", "limit", "single task"] {
+            assert!(message.contains(phrase), "{message}");
+        }
+        assert!(replies[1]["result"].to_string().len() <= cap);
+        assert_eq!(envelope(&replies[2])["data"]["title"], "small");
+        assert_eq!(replies[3]["result"], json!({}));
+    }
+}
+
+#[test]
+fn basecamp_tools_preserve_wire_object_argument_types() {
+    let dir = TempDir::new().unwrap();
+    for name in ["bc_status", "bc_link"] {
+        let replies = raw_session(
+            &dir,
+            format!(
+                "{}\n{{\"jsonrpc\":\"2.0\",\"id\":{{\"$serde_json::private::Number\":\"2\"}},\"method\":\"tools/call\",\"params\":{{\"name\":\"{name}\",\"arguments\":{{}}}}}}\n",
+                initialize()
+            ),
+        );
+        assert_eq!(replies[1]["id"], Value::Null);
+        assert_eq!(replies[1]["error"]["code"], -32600);
+    }
+
+    let replies = raw_session(
+        &dir,
+        format!(
+            "{}\n{}\n{}\n{}\n",
+            initialize(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"bc_status","arguments":{"project":{"$serde_json::private::Number":"1"}}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bc_link","arguments":{"project":"demo","bucket":{"$serde_json::private::Number":"1"},"card-table":"456","map":"todo=10"}}}"#,
+            json!({"jsonrpc":"2.0","id":4,"method":"ping"})
+        ),
+    );
+    for reply in &replies[1..3] {
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(envelope(reply)["refusals"][0]["code"], "invalid-input");
+    }
+    assert_eq!(replies[3]["result"], json!({}));
+}
+
+#[test]
+fn basecamp_status_result_obeys_four_mib_cap_and_recovers() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    let plan = dir.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        json!([{"project":"demo","title":"large","notes":"x".repeat(2_100_000)}]).to_string(),
+    )
+    .unwrap();
+    command(&dir)
+        .args(["add", "--file", plan.to_str().unwrap()])
+        .assert()
+        .success();
+    // Link only after adding: fixture setup never invokes a remote adapter.
+    command(&dir)
+        .args([
+            "bc",
+            "link",
+            "-p",
+            "demo",
+            "--bucket",
+            "123",
+            "--card-table",
+            "456",
+            "--map",
+            "todo=10",
+        ])
+        .assert()
+        .success();
+    let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+    db.execute(
+        "INSERT INTO basecamp_cards(task_id,card_id,dirty,last_error) VALUES(1,'',1,'fixture')",
+        [],
+    )
+    .unwrap();
+    let replies = session(
+        &dir,
+        &[
+            initialize(),
+            call(2, "bc_status", json!({"project":"demo"})),
+            call(3, "project_list", json!({})),
+            json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+        ],
+    );
+    assert_eq!(replies[1]["result"]["isError"], true);
+    let refusal = envelope(&replies[1]);
+    assert_eq!(refusal["refusals"][0]["code"], "invalid-input");
+    assert!(
+        refusal["refusals"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exceeded 4 MiB")
+    );
+    assert!(replies[1]["result"].to_string().len() <= 4 * 1024 * 1024);
+    assert_eq!(envelope(&replies[2])["ok"], true);
+    assert_eq!(replies[3]["result"], json!({}));
 }

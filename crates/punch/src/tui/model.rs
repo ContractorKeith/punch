@@ -143,13 +143,19 @@ impl Board {
             .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(5))
             .map(|(text, _)| text.as_str())
     }
+    pub(super) fn complete_action<T>(&mut self, store: &mut Store, out: Outcome<T>) -> Option<T> {
+        self.status = (!out.warnings.is_empty())
+            .then(|| (out.warnings.join("; "), std::time::Instant::now()));
+        if let Err(error) = self.reload(store) {
+            self.flash(error);
+            return None;
+        }
+        Some(out.data)
+    }
     pub fn apply(&mut self, store: &mut Store, snapshot: &Task, update: ops::Update) {
         match ops::update_task(store, &self.actor, snapshot, update) {
-            Ok(_) => {
-                self.status = None;
-                if let Err(e) = self.reload(store) {
-                    self.flash(e);
-                }
+            Ok(out) => {
+                self.complete_action(store, out);
             }
             Err(e) => {
                 if e.code == punch_core::error::STALE
@@ -176,6 +182,13 @@ impl Board {
         }
     }
     pub fn save_notes(&mut self, store: &mut Store, snapshot: &Task, notes: String) {
+        if notes == snapshot.notes {
+            self.status = Some((
+                "No notes changed; $EDITOR must wait for the file to close".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
         self.apply(
             store,
             snapshot,
@@ -198,16 +211,14 @@ impl Board {
         };
         match ops::add(store, &self.actor, args) {
             Ok(out) => {
-                self.status = None;
-                if let Err(e) = self.reload(store) {
-                    self.flash(e);
+                let Some(data) = self.complete_action(store, out) else {
                     return;
-                }
+                };
                 self.column = 0;
                 self.row = self
                     .cards(0)
                     .iter()
-                    .position(|t| t.id == out.data.task.id)
+                    .position(|t| t.id == data.task.id)
                     .unwrap_or(0);
             }
             Err(e) => self.flash(e),

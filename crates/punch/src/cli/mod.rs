@@ -246,6 +246,9 @@ pub(crate) fn execute_with_plan(cli: &Cli, plan: Option<&str>) -> Result<Reply, 
         .slot
         .as_ref()
         .map_or(Actor::Person, |s| Actor::Agent(s.clone()));
+    if matches!(cli.command, Some(Command::Board)) {
+        return Err(PunchError::usage("board is interactive; use list --json"));
+    }
     let mut store = Store::open()?;
     match cli
         .command

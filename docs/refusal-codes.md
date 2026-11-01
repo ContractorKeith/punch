@@ -21,9 +21,9 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `after-cycle` | The dependency would create a cycle. Exit 1. |
 | `invalid-input` | Invalid arguments, date, priority, or plan JSON. Exit 2. |
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
-| `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs. Read back before retrying a write. Exit 3. |
+| `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs/revisions. Read back before retrying a write. Exit 3. |
 | `offline` | A GitHub call failed with a network error; the message preserves gh stderr. Claim/unclaim leave local state unchanged. Exit 1. |
-| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/pagination data; the message includes captured stderr, including on timeout. Captured streams are limited to 1 MiB and excess output is reported as truncated. Claim/unclaim leave local state unchanged. Exit 1. |
+| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data or PR draft/review fields; the message includes captured stderr, including on timeout. Captured streams are limited to 1 MiB and excess output is reported as truncated. Claim/unclaim leave local state unchanged. Exit 1. |
 
 Success, including a no-op, exits 0. A successful JSON result has exactly
 `ok`, `changed`, `data`, and `warnings`. Task creation returns
@@ -63,7 +63,10 @@ sync failures also set `isError: true`; inspect each item's refusals even when
 `ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
 JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`), paths that do not resolve to regular
 files, and plan files over 1 MiB with `invalid-input`
-because stdin carries protocol messages. No phase 4 refusal codes were added.
+because stdin carries protocol messages. Serialized tool results over 4 MiB
+also return `invalid-input` with `isError: true`; narrow the request with a
+project filter, a limit, or show a single task. The cap counts both result
+envelopes and JSON escaping. No phase 4 refusal codes were added.
 
 Without a subcommand, an interactive terminal opens the board. With JSON,
 bare `punch --json` returns the help envelope; `punch board --json` exits 2

@@ -1,7 +1,7 @@
 //! Atomic field and dependency edits.
 use super::{
     project::now,
-    task::{dependencies, resolve, validate_fields},
+    task::{bump_revision, dependencies, resolve, validate_fields},
 };
 use crate::{error::*, model::*, store::Store};
 #[derive(Debug, Clone, Default)]
@@ -60,7 +60,7 @@ pub fn edit(
         if task == *old {
             return Ok(Outcome::new(false, task));
         }
-        task.revision += 1;
+        bump_revision(&mut task)?;
         task.updated_at = now()?;
         repo.save_task(&task)?;
         if task.after != old.after {

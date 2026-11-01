@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["arbitrary_precision"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 punch-core = { path = "../punch-core" }
 ratatui = "0.29"
 crossterm = "0.28"

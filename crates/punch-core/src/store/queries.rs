@@ -257,7 +257,7 @@ impl Repository<'_> {
                 )?;
                 return Ok(false);
             }
-            task.revision += 1;
+            crate::ops::bump_revision(&mut task)?;
             task.updated_at = now.into();
             self.save_task(&task)?;
             task.id

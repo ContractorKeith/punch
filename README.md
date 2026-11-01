@@ -28,6 +28,8 @@ Agents should pass `--json` and identify themselves with `--as <slot>` or
 `PUNCH_AGENT=<slot>`. Ops enforce agent permissions, including no finishing or
 archiving cards. Writes report `changed`; identical adds return `existing: true`.
 Notes append a timestamp and actor on every call and are not idempotent.
+Changes advance the task revision; an exhausted revision refuses the change
+with `storage-failed` (exit 3), leaving the task unchanged.
 Task references accept `t12`, `12`, or `project#566` for cached GitHub cards.
 
 Import a JSON array with `punch add --file plan.json` (or `--file -` for stdin):
@@ -74,6 +76,11 @@ successful projects, with exit 3 if any project fails. GitHub fetching completes
 before the short local write transaction, so reads and local writes keep working
 during a slow fetch. Each `gh` subprocess has a 30-second timeout (`gh-failed`).
 GraphQL connection walks reject repeated cursors and stop after 100 pages.
+
+Malformed PR or closing-reference numbers fail sync with `gh-failed`, preserving
+the project's cached cards and links. Empty non-PR cross-references are skipped.
+PRs require a boolean draft state and a review decision of null, `APPROVED`,
+`CHANGES_REQUESTED`, or `REVIEW_REQUIRED`; invalid values also fail before import.
 
 For GitHub cards, claim/unclaim first adds/removes `@me` with `gh issue edit`,
 then refreshes the card before committing locally. A remote or refresh failure
@@ -148,9 +155,13 @@ because stdin belongs to the transport. Paths must resolve through symlinks to
 regular files; devices, FIFOs, and stdin aliases are refused before opening.
 Request payloads (excluding LF or CRLF) and plan files are capped at 1 MiB.
 Oversized lines return Invalid Request; oversized plans return `invalid-input`.
-The server continues with the next request. `bc_status` reads mirror status;
-`bc_link` is exposed for parity but core ops refuse every MCP agent with
-`agent-cannot-manage-projects` because linking is person-only.
+Serialized tool results, including both text and structured content and JSON
+escaping, are capped at 4 MiB. Larger results return an `isError: true`
+`invalid-input` refusal: narrow the request with a project filter, a limit,
+or show a single task. The server continues with the next request.
+`bc_status` reads mirror status; `bc_link` is exposed for parity but core ops
+refuse every MCP agent with `agent-cannot-manage-projects` because linking is
+person-only.
 
 Request ids must be strings or integers fitting i64 or u64 and are echoed
 exactly. Null, fractional, and out-of-range ids return Invalid Request with a
@@ -175,5 +186,10 @@ Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
 then `y`. Adding from “all” first asks for a project; new cards start in Todo.
 Notes edits and archive confirmations retain the original revision, so an
 external update produces `stale` and reloads instead of overwriting it. Other
-refusals flash for five seconds. `j/k` scroll long detail and help panes;
+refusals and successful-action warnings flash for five seconds. `j/k` scroll long detail and help panes;
 `Esc` closes a pane or cancels input.
+
+$EDITOR must wait for the file to close before returning. For GUI editors, use
+`EDITOR='open -W -t'` on macOS, `EDITOR='code --wait'`, or `EDITOR='subl -w'`.
+If the editor returns with unchanged notes, the board flashes that no change
+was made and reminds you of the wait requirement.

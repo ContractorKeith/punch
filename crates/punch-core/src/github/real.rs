@@ -146,6 +146,12 @@ impl RealGh {
         }
         Ok(nodes)
     }
+    fn reference_number(node: &Value) -> Result<i64, PunchError> {
+        node["number"]
+            .as_i64()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| PunchError::refusal(GH_FAILED, "gh", "invalid GitHub reference number"))
+    }
     fn closing(&self, repo: &str, number: i64) -> Result<Vec<i64>, PunchError> {
         self.closing_for(repo, number, repo)
     }
@@ -155,16 +161,17 @@ impl RealGh {
         number: i64,
         issue_repo: &str,
     ) -> Result<Vec<i64>, PunchError> {
-        Ok(self
-            .connection(repo, number, "pullRequest")?
-            .iter()
-            .filter(|n| {
-                n["repository"]["nameWithOwner"]
-                    .as_str()
-                    .is_some_and(|r| r.eq_ignore_ascii_case(issue_repo))
-            })
-            .filter_map(|n| n["number"].as_i64())
-            .collect())
+        let mut numbers = vec![];
+        for node in self.connection(repo, number, "pullRequest")? {
+            let number = Self::reference_number(&node)?;
+            if node["repository"]["nameWithOwner"]
+                .as_str()
+                .is_some_and(|r| r.eq_ignore_ascii_case(issue_repo))
+            {
+                numbers.push(number);
+            }
+        }
+        Ok(numbers)
     }
 }
 impl Gh for RealGh {
@@ -238,18 +245,25 @@ impl Gh for RealGh {
         Ok(item)
     }
     fn linked(&self, repo: &str, issue: i64) -> Result<Vec<Item>, PunchError> {
-        let numbers: BTreeSet<_> = self
-            .connection(repo, issue, "issue")?
-            .iter()
-            .filter_map(|n| {
-                Some((
-                    n["source"]["repository"]["nameWithOwner"]
-                        .as_str()?
-                        .to_owned(),
-                    n["source"]["number"].as_i64()?,
-                ))
-            })
-            .collect();
+        let mut numbers = BTreeSet::new();
+        for node in self.connection(repo, issue, "issue")? {
+            let source = &node["source"];
+            // Non-PR inline fragments contain no selected PR fields.
+            if source.is_null()
+                || source.as_object().is_some_and(|o| o.is_empty())
+                || source
+                    .get("__typename")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t != "PullRequest")
+            {
+                continue;
+            }
+            let number = Self::reference_number(source)?;
+            let repository = source["repository"]["nameWithOwner"]
+                .as_str()
+                .ok_or_else(|| PunchError::refusal(GH_FAILED, repo, "missing PR repository"))?;
+            numbers.insert((repository.to_owned(), number));
+        }
         let mut prs = vec![];
         for (source, n) in numbers {
             let mut pr = self.get(&source, Kind::Pr, n)?;

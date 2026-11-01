@@ -893,11 +893,388 @@ fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
             assert!(note.is_ok(), "{note:?}");
             assert!(elapsed < Duration::from_secs(2));
             assert!(result.data.notes.contains("concurrent edit"));
-            assert_eq!(result.data.revision, note.unwrap().data.revision + 1);
+            assert_eq!(
+                result.data.revision,
+                note.unwrap().data.revision.checked_add(1).unwrap()
+            );
             assert_eq!(
                 result.data.slot.as_deref(),
                 if unclaim { None } else { Some("new") }
             );
         }
+    });
+}
+
+// Exercise malformed GraphQL responses after a valid cache has been imported.
+#[test]
+fn malformed_reference_numbers_fail_sync_without_erasing_cached_links() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use serde_json::json;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        let mut store = Store::open().unwrap();
+        ops::project_add(
+            &mut store,
+            &Actor::Person,
+            ops::ProjectAdd {
+                slug: "cli".into(),
+                name: None,
+                github: Some("cli/cli".into()),
+                scope: Some(SyncScope::All),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops::sync(&mut store, &Actor::Person, &RealGh, None)
+                .unwrap()
+                .data[0]
+                .status,
+            "synced"
+        );
+        let before = ops::show(&mut store, &Actor::Person, "cli#14895")
+            .unwrap()
+            .data;
+        assert_eq!(before.column, Column::Review);
+        for field in ["timeline", "closing"] {
+            for number in [
+                None,
+                Some(json!("14846")),
+                Some(json!(null)),
+                Some(json!(false)),
+            ] {
+                let mut node = json!({"repository":{"nameWithOwner":"cli/cli"}});
+                if let Some(number) = number {
+                    node["number"] = number;
+                }
+                let response = if field == "timeline" {
+                    json!({"data":{"repository":{"issue":{"timelineItems":{
+                        "nodes":[{"source":node}], "pageInfo":{"hasNextPage":false}
+                    }}}}})
+                } else {
+                    json!({"data":{"repository":{"pullRequest":{"closingIssuesReferences":{
+                        "nodes":[node], "pageInfo":{"hasNextPage":false}
+                    }}}}})
+                };
+                let path = state.join(format!("{field}-response"));
+                std::fs::write(&path, response.to_string()).unwrap();
+                let out = ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap();
+                assert_eq!(out.data[0].status, "failed", "{field}");
+                assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, "cli#14895")
+                        .unwrap()
+                        .data,
+                    before
+                );
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    });
+}
+
+#[test]
+fn empty_and_non_pr_cross_references_are_skipped() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(
+            state.join("timeline-response"),
+            serde_json::json!({
+                "data":{"repository":{"issue":{"timelineItems":{
+                    "nodes":[{}, {"source":null}, {"source":{}}, {"source":{"__typename":"Issue"}}],
+                    "pageInfo":{"hasNextPage":false}
+                }}}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(RealGh.linked("cli/cli", 14895).unwrap().is_empty());
+    });
+}
+
+#[test]
+fn real_pr_validation_rejects_invalid_draft_and_review_before_import() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use serde_json::json;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        let valid = json!({"number":14846,"title":"PR","state":"OPEN","assignees":[],
+            "url":"https://github.com/cli/cli/pull/14846","updatedAt":"2026-11-01T00:00:00Z",
+            "isDraft":false,"reviewDecision":null});
+        for (field, value) in [
+            ("isDraft", None),
+            ("isDraft", Some(json!(null))),
+            ("isDraft", Some(json!("false"))),
+            ("reviewDecision", Some(json!("GARBAGE"))),
+            ("reviewDecision", Some(json!(""))),
+            ("reviewDecision", Some(json!(true))),
+        ] {
+            let mut invalid = valid.clone();
+            if let Some(value) = value {
+                invalid[field] = value;
+            } else {
+                invalid.as_object_mut().unwrap().remove(field);
+            }
+            std::fs::write(state.join("pr-response"), invalid.to_string()).unwrap();
+            assert_eq!(
+                RealGh.get("cli/cli", Kind::Pr, 14846).unwrap_err().code,
+                "gh-failed",
+                "{field}"
+            );
+            std::fs::write(state.join("pr-list-response"), json!([invalid]).to_string()).unwrap();
+            let (_dir, mut store) = setup();
+            let out = ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap();
+            assert_eq!(out.data[0].status, "failed");
+            assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+            assert!(
+                ops::list(&mut store, &Actor::Person, ops::List::default())
+                    .unwrap()
+                    .data
+                    .is_empty()
+            );
+        }
+        for draft in [false, true] {
+            for review in [
+                json!(null),
+                json!("APPROVED"),
+                json!("CHANGES_REQUESTED"),
+                json!("REVIEW_REQUIRED"),
+            ] {
+                let mut value = valid.clone();
+                value["isDraft"] = json!(draft);
+                value["reviewDecision"] = review;
+                std::fs::write(state.join("pr-response"), value.to_string()).unwrap();
+                assert_eq!(
+                    RealGh.get("cli/cli", Kind::Pr, 14846).unwrap().is_draft,
+                    Some(draft)
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn trait_pr_validation_preserves_cache_for_list_refresh_and_linked_items() {
+    isolated(|| {
+        for stage in ["list", "refresh", "linked"] {
+            for invalid in ["draft", "review"] {
+                let (_dir, mut store) = setup();
+                let mut gh = Fake::new(
+                    serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap(),
+                );
+                ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                let before = ops::list(&mut store, &Actor::Person, ops::List::default())
+                    .unwrap()
+                    .data;
+                let mut item = gh.items.borrow()[1].clone();
+                if invalid == "draft" {
+                    item.is_draft = None;
+                } else {
+                    item.review_decision = Some("GARBAGE".into());
+                }
+                match stage {
+                    "list" => gh.items.borrow_mut()[1] = item,
+                    "refresh" => {
+                        gh.items.borrow_mut()[1].state = "CLOSED".into();
+                        gh.items.borrow_mut()[1].is_draft = item.is_draft;
+                        gh.items.borrow_mut()[1].review_decision = item.review_decision;
+                    }
+                    _ => {
+                        item.closes = vec![1];
+                        gh.links = vec![item];
+                    }
+                }
+                let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                assert_eq!(out.data[0].status, "failed", "{stage}/{invalid}");
+                assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+                assert_eq!(
+                    ops::list(&mut store, &Actor::Person, ops::List::default())
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn large_existing_card_refresh_uses_keyed_replacement_without_scans() {
+    isolated(|| {
+        let (_dir, mut store) = setup();
+        let template: Item = serde_json::from_value(refresh_value()).unwrap();
+        let gh = Fake::new(
+            (1..=2048)
+                .map(|number| {
+                    let mut item = template.clone();
+                    item.number = number;
+                    item
+                })
+                .collect(),
+        );
+        assert_eq!(
+            ops::sync(&mut store, &Actor::Person, &gh, None)
+                .unwrap()
+                .data[0]
+                .cards,
+            2048
+        );
+        for item in gh.items.borrow_mut().iter_mut() {
+            item.title = format!("refreshed {}", item.number);
+            if item.number % 2 == 0 {
+                item.state = "CLOSED".into();
+            }
+        }
+        let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        assert!(out.changed);
+        assert_eq!(out.data[0].cards, 2048);
+        let cards = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        assert_eq!(cards.len(), 2048);
+        for card in cards {
+            let number = card.gh_number.unwrap();
+            assert_eq!(card.title, format!("refreshed {number}"));
+            assert_eq!(card.revision, 2);
+            assert_eq!(
+                card.column,
+                if number % 2 == 0 {
+                    Column::Done
+                } else {
+                    Column::Todo
+                }
+            );
+        }
+        // Behavior alone cannot catch quadratic merging. Guard the refresh loop's
+        // keyed replacement structurally, without a machine-dependent timing limit.
+        let source: String = include_str!("../src/ops/sync.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let refresh = source
+            .split_once("for&(kind,number)inexisting{")
+            .unwrap()
+            .1
+            .split_once("letissues:")
+            .unwrap()
+            .0;
+        assert!(
+            refresh.contains("indices.get(&key)"),
+            "existing-card refresh must look up its index by identity"
+        );
+        for scan in [
+            "items.retain(",
+            "items.iter(",
+            "items.iter_mut(",
+            "items.clone(",
+            "in&items",
+            "initems",
+        ] {
+            assert!(!refresh.contains(scan), "per-card scan in refresh: {scan}");
+        }
+    });
+}
+
+#[test]
+fn claim_revision_overflow_preserves_local_and_github_tasks() {
+    isolated(|| {
+        for github in [false, true] {
+            for unclaim in [false, true] {
+                let (dir, mut store) = setup();
+                let gh = Fake::new(
+                    serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap(),
+                );
+                let reference = if github {
+                    ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                    "demo#1"
+                } else {
+                    let args = serde_json::from_value(
+                        serde_json::json!({"project":"demo","title":"local"}),
+                    )
+                    .unwrap();
+                    ops::add(&mut store, &Actor::Person, args).unwrap();
+                    "t1"
+                };
+                if unclaim {
+                    ops::claim(&mut store, &Actor::Person, &gh, reference, Some("old")).unwrap();
+                }
+                let task = ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data;
+                let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+                db.execute(
+                    "UPDATE tasks SET revision=?1 WHERE id=?2",
+                    [i64::MAX, task.id],
+                )
+                .unwrap();
+                let before = ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data;
+                let error = if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &gh, reference)
+                } else {
+                    ops::claim(&mut store, &Actor::Person, &gh, reference, Some("new"))
+                }
+                .unwrap_err();
+                assert_eq!(error.code, "storage-failed");
+                assert_eq!(error.exit_code, 3);
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, reference)
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn sync_revision_overflow_rolls_back_task_and_cache_changes() {
+    isolated(|| {
+        let (dir, mut store) = setup();
+        let gh =
+            Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+        ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+        db.execute("UPDATE tasks SET revision=?1", [i64::MAX])
+            .unwrap();
+        let before = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        for item in gh.items.borrow_mut().iter_mut() {
+            item.title.push_str(" changed");
+        }
+        let result = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        assert!(!result.changed);
+        assert_eq!(result.data[0].status, "failed");
+        assert_eq!(result.data[0].refusals[0].code, "storage-failed");
+        assert_eq!(
+            ops::list(
+                &mut store,
+                &Actor::Person,
+                ops::List {
+                    all: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data,
+            before
+        );
     });
 }

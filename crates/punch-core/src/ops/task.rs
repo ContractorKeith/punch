@@ -1,6 +1,15 @@
 //! Shared task reference and input validation.
 use crate::{error::*, model::*};
 
+// Refuse exhausted revisions before any task or dependency rows are saved.
+pub(crate) fn bump_revision(task: &mut Task) -> Result<(), PunchError> {
+    task.revision = task
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| PunchError::storage("task revision exhausted"))?;
+    Ok(())
+}
+
 pub(super) fn resolve<'a>(tasks: &'a [Task], reference: &str) -> Result<&'a Task, PunchError> {
     let found = if let Some((slug, number)) = reference.split_once('#') {
         number.parse::<i64>().ok().and_then(|n| {
