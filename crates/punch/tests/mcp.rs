@@ -564,3 +564,86 @@ fn tool_string_values_are_literal_and_empty_dependencies_are_supported() {
         "agent-cannot-finish"
     );
 }
+
+// Keep stdin open: a plan must never wait for EOF or consume the next request.
+fn live_plan_session(dir: &TempDir, path: &std::path::Path) -> Vec<Value> {
+    use std::io::{BufRead, Write};
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("punch"))
+        .arg("mcp")
+        .env("PUNCH_STATE_DIR", dir.path())
+        .env_remove("PUNCH_AGENT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    for request in [
+        initialize(),
+        call(2, "add_plan", json!({"file":path})),
+        json!({"jsonrpc":"2.0","id":3,"method":"ping"}),
+    ] {
+        writeln!(stdin, "{request}").unwrap();
+    }
+    let replies = (0..3)
+        .map(|_| rx.recv_timeout(std::time::Duration::from_secs(3)))
+        .collect::<Result<Vec<_>, _>>();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    drop(stdin);
+    reader.join().unwrap();
+    replies
+        .expect("server must answer while stdin stays open")
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn plan_rejects_stdin_aliases_and_non_regular_files_before_opening() {
+    let dir = TempDir::new().unwrap();
+    let fifo = dir.path().join("fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let alias = dir.path().join("stdin-link");
+    std::os::unix::fs::symlink("/dev/stdin", &alias).unwrap();
+    let mut paths = vec![
+        std::path::PathBuf::from("/dev/stdin"),
+        alias,
+        fifo,
+        "/dev/null".into(),
+        dir.path().to_owned(),
+    ];
+    #[cfg(target_os = "linux")]
+    paths.push("/proc/self/fd/0".into());
+    for path in paths {
+        let replies = live_plan_session(&dir, &path);
+        assert_eq!(replies[1]["result"]["isError"], true, "{}", path.display());
+        assert_eq!(
+            envelope(&replies[1])["refusals"][0]["code"],
+            "invalid-input"
+        );
+        assert_eq!(replies[2]["id"], 3);
+        assert_eq!(replies[2]["result"], json!({}));
+    }
+    let plan = dir.path().join("plan.json");
+    std::fs::write(&plan, "[]").unwrap();
+    let link = dir.path().join("plan-link");
+    std::os::unix::fs::symlink(plan, &link).unwrap();
+    assert_eq!(envelope(&live_plan_session(&dir, &link)[1])["ok"], true);
+}

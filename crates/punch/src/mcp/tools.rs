@@ -116,11 +116,12 @@ impl Tool {
                 return Err(PunchError::usage(format!("missing argument: {required}")));
             }
         }
-        // Never let a tool consume JSON-RPC from stdin as a plan.
-        if object.get("file").is_some_and(|v| v == "-") {
-            return Err(PunchError::usage(
-                "MCP plans require a file path; stdin is the transport",
-            ));
+        // Follow symlinks before opening: devices/FIFOs may consume transport or block.
+        if let Some(path) = object.get("file").and_then(Value::as_str) {
+            let metadata = std::fs::metadata(path).map_err(PunchError::usage)?;
+            if !metadata.is_file() {
+                return Err(PunchError::usage("MCP plans require a regular file"));
+            }
         }
         let mut raw = vec!["punch".to_owned(), format!("--as={slot}"), "--json".into()];
         raw.extend(self.path.clone());
