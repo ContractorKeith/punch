@@ -583,3 +583,21 @@ fn revision_overflow_refuses_every_task_change_without_writing() {
         assert_eq!(json(&dir, &["show", "t1"])["data"], before, "{args:?}");
     }
 }
+
+#[test]
+fn notes_advance_returned_and_persisted_revision_on_every_append() {
+    let dir = setup();
+    json(&dir, &["add", "original", "-p", "demo"]);
+    assert_eq!(json(&dir, &["show", "t1"])["data"]["revision"], 1);
+    for (actor, revision) in [("person", 2), ("bot", 3)] {
+        let args = if actor == "bot" {
+            vec!["--as", "bot", "note", "t1", "same text"]
+        } else {
+            vec!["note", "t1", "same text"]
+        };
+        let result = json(&dir, &args);
+        assert_eq!(result["changed"], true);
+        assert_eq!(result["data"]["revision"], revision);
+        assert_eq!(json(&dir, &["show", "t1"])["data"], result["data"]);
+    }
+}
