@@ -455,13 +455,13 @@ fn initialize_rejects_invalid_params_and_negotiates_versions() {
     assert_eq!(replies[0]["error"]["code"], -32600);
     assert_eq!(replies[1]["error"]["code"], -32602);
     assert_eq!(replies[2]["error"]["code"], -32602);
-    assert_eq!(replies[3]["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(replies[3]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(replies[4]["error"]["code"], -32602);
     let mut old = initialize();
     old["params"]["protocolVersion"] = json!("2024-11-05");
     assert_eq!(
         session(&dir, &[old])[0]["result"]["protocolVersion"],
-        "2024-11-05"
+        "2025-06-18"
     );
     assert!(!dir.path().join("punch.db").exists());
 }
@@ -721,5 +721,36 @@ fn request_ids_echo_strings_and_integer_boundaries_exactly() {
         );
         assert_eq!(replies[0]["id"].to_string(), id);
         assert_eq!(replies[0]["result"], json!({}));
+    }
+}
+
+#[test]
+fn version_negotiation_only_advertises_supported_non_batch_versions() {
+    let dir = TempDir::new().unwrap();
+    for (requested, expected) in [
+        ("2025-06-18", "2025-06-18"),
+        ("2025-11-25", "2025-11-25"),
+        ("2024-11-05", "2025-06-18"),
+        ("2025-03-26", "2025-06-18"),
+        ("unknown", "2025-06-18"),
+        ("2099-01-01", "2025-06-18"),
+    ] {
+        let mut init = initialize();
+        init["params"]["protocolVersion"] = json!(requested);
+        let replies = session(
+            &dir,
+            &[
+                init,
+                json!([{"jsonrpc":"2.0","id":2,"method":"ping"}, {"jsonrpc":"2.0","id":3,"method":"ping"}]),
+                json!({"jsonrpc":"2.0","id":4,"method":"ping"}),
+            ],
+        );
+        assert_eq!(
+            replies[0]["result"]["protocolVersion"], expected,
+            "requested {requested}"
+        );
+        assert_eq!(replies[1]["error"]["code"], -32600);
+        assert_eq!(replies[1]["id"], Value::Null);
+        assert_eq!(replies[2]["result"], json!({}));
     }
 }

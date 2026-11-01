@@ -58,10 +58,8 @@ fn serve(input: impl BufRead, mut output: impl Write, slot: &str) -> Result<(), 
                             let version =
                                 request["params"]["protocolVersion"].as_str().unwrap_or("");
                             let version = match version {
-                                "2024-11-05" | "2025-03-26" | "2025-06-18" | "2025-11-25" => {
-                                    version
-                                }
-                                _ => "2025-11-25",
+                                "2025-06-18" | "2025-11-25" => version,
+                                _ => "2025-06-18",
                             };
                             Ok(
                                 json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"punch","version":env!("CARGO_PKG_VERSION")}}),
