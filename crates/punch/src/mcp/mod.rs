@@ -31,9 +31,9 @@ fn serve(input: impl BufRead, mut output: impl Write, slot: &str) -> Result<(), 
                 if !request.is_object()
                     || request["jsonrpc"] != "2.0"
                     || !request["method"].is_string()
-                    || request
-                        .get("id")
-                        .is_some_and(|v| !v.is_null() && !v.is_string() && !v.is_number())
+                    || request.get("id").is_some_and(|v| {
+                        !v.is_string() && v.as_i64().is_none() && v.as_u64().is_none()
+                    })
                     || request
                         .get("params")
                         .is_some_and(|v| !v.is_object() && !v.is_array())

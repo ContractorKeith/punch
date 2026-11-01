@@ -647,3 +647,79 @@ fn plan_rejects_stdin_aliases_and_non_regular_files_before_opening() {
     std::os::unix::fs::symlink(plan, &link).unwrap();
     assert_eq!(envelope(&live_plan_session(&dir, &link)[1])["ok"], true);
 }
+
+fn raw_session(dir: &TempDir, input: String) -> Vec<Value> {
+    let output = command(dir)
+        .arg("mcp")
+        .write_stdin(input)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(output.stderr.is_empty());
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+fn assert_invalid_id(id: &str) {
+    let dir = TempDir::new().unwrap();
+    let replies = raw_session(
+        &dir,
+        format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"ping\"}}\n{{\"jsonrpc\":\"2.0\",\"id\":\"after\",\"method\":\"ping\"}}\n"
+        ),
+    );
+    assert_eq!(replies.len(), 2);
+    assert_eq!(
+        replies[0],
+        json!({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}),
+        "id {id}"
+    );
+    assert_eq!(
+        replies[1],
+        json!({"jsonrpc":"2.0","id":"after","result":{}})
+    );
+}
+#[test]
+fn request_id_null_is_invalid() {
+    assert_invalid_id("null");
+}
+#[test]
+fn request_id_fractional_is_invalid() {
+    for id in ["1.5", "1.0", "1e0"] {
+        assert_invalid_id(id);
+    }
+}
+#[test]
+fn request_id_huge_is_invalid_without_rounding() {
+    for id in [
+        "18446744073709551616",
+        "18446744073709551617",
+        "-9223372036854775809",
+        "1e400",
+    ] {
+        assert_invalid_id(id);
+    }
+}
+#[test]
+fn request_ids_echo_strings_and_integer_boundaries_exactly() {
+    let dir = TempDir::new().unwrap();
+    for id in [
+        "\"a-string\"",
+        "\"\"",
+        "0",
+        "-1",
+        "-9223372036854775808",
+        "9223372036854775807",
+        "18446744073709551615",
+    ] {
+        let replies = raw_session(
+            &dir,
+            format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"ping\"}}\n"),
+        );
+        assert_eq!(replies[0]["id"].to_string(), id);
+        assert_eq!(replies[0]["result"], json!({}));
+    }
+}
