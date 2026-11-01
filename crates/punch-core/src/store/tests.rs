@@ -563,3 +563,124 @@ fn archive_and_unarchive_bump_revision_only_on_change() {
         }
     });
 }
+
+#[test]
+fn show_reads_only_the_referenced_task() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "wanted");
+        add(&mut store, "unrelated");
+        // Unrelated detail must not be decoded by a single-task read.
+        store
+            .connection
+            .execute("UPDATE tasks SET notes=x'80' WHERE id=2", [])
+            .unwrap();
+        for reference in ["t1", "1"] {
+            assert_eq!(
+                ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data
+                    .title,
+                "wanted"
+            );
+        }
+        github_issue(&mut store);
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "demo#566")
+                .unwrap()
+                .data
+                .gh_number,
+            Some(566)
+        );
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "missing")
+                .unwrap_err()
+                .code,
+            UNKNOWN_TASK
+        );
+    });
+}
+
+#[test]
+fn ready_filters_and_limits_before_loading_details() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "blocked");
+        add(&mut store, "wanted");
+        add(&mut store, "beyond limit");
+        store.connection.execute_batch("INSERT INTO task_after VALUES(1,3); UPDATE tasks SET notes=x'80' WHERE id IN (1,3);").unwrap();
+        let ready = ops::ready(
+            &mut store,
+            &Actor::Person,
+            ops::Ready {
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].title, "wanted");
+        assert!(
+            ops::ready(
+                &mut store,
+                &Actor::Person,
+                ops::Ready {
+                    limit: Some(0),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data
+            .is_empty()
+        );
+    });
+}
+
+#[test]
+fn ready_sql_matches_derived_columns_for_github_states() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        let mut number = 0;
+        for kind in ["issue", "pr"] {
+            for state in ["OPEN", "CLOSED", "MERGED"] {
+                for linked in [None, Some("OPEN"), Some("CLOSED"), Some("MERGED")] {
+                    for assigned in ["[]", "[\"keith\"]"] {
+                        for draft in [false, true] {
+                            for review in [None, Some("CHANGES_REQUESTED")] {
+                                number += 1;
+                                store.connection.execute("INSERT INTO tasks(project_id,kind,gh_number,title,position,created_at,updated_at) VALUES(1,?1,?2,'card',?2,'now','now')", rusqlite::params![kind,number]).unwrap();
+                                let id = store.connection.last_insert_rowid();
+                                store.connection.execute("INSERT INTO gh_cache(task_id,state,assignees,is_draft,review_decision,linked_pr_state,linked_pr_draft,linked_pr_review,url,fetched_at) VALUES(?1,?2,?3,?4,?5,?6,?4,?5,'url','now')", rusqlite::params![id,state,assigned,draft,review,linked]).unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data
+        .into_iter()
+        .filter(|t| t.column == Column::Todo)
+        .map(|t| t.id)
+        .collect();
+        let actual: Vec<_> = ops::ready(&mut store, &Actor::Person, ops::Ready::default())
+            .unwrap()
+            .data
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(actual, expected);
+    });
+}

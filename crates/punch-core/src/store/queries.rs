@@ -56,9 +56,29 @@ impl<'a> Repository<'a> {
         Ok(())
     }
     pub(crate) fn tasks(&self) -> Result<Vec<Task>, PunchError> {
-        let mut stmt = self.db.prepare("SELECT t.id,t.project_id,p.slug,t.kind,t.gh_number,t.title,t.notes,t.local_column,t.priority,t.due,t.assignee,t.assignee_kind,t.slot,t.position,t.archived,t.revision,t.created_at,t.updated_at FROM tasks t JOIN projects p ON p.id=t.project_id ORDER BY t.id")?;
+        self.query_tasks("", [])
+    }
+    pub(crate) fn task(&self, id: i64) -> Result<Option<Task>, PunchError> {
+        Ok(self.query_tasks("WHERE t.id=?1", [id])?.pop())
+    }
+    pub(crate) fn github_task_id(
+        &self,
+        slug: &str,
+        number: i64,
+    ) -> Result<Option<i64>, PunchError> {
+        Ok(self.db.query_row(
+            "SELECT t.id FROM tasks t JOIN projects p ON p.id=t.project_id WHERE p.slug=?1 AND t.gh_number=?2 ORDER BY t.id LIMIT 1",
+            params![slug, number], |r| r.get(0),
+        ).optional()?)
+    }
+    fn query_tasks(
+        &self,
+        filter: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<Task>, PunchError> {
+        let mut stmt = self.db.prepare(&format!("SELECT t.id,t.project_id,p.slug,t.kind,t.gh_number,t.title,t.notes,t.local_column,t.priority,t.due,t.assignee,t.assignee_kind,t.slot,t.position,t.archived,t.revision,t.created_at,t.updated_at FROM tasks t JOIN projects p ON p.id=t.project_id {filter} ORDER BY t.id"))?;
         let mut tasks = stmt
-            .query_map([], |r| {
+            .query_map(params, |r| {
                 Ok(Task {
                     id: r.get(0)?,
                     project_id: r.get(1)?,
@@ -118,6 +138,52 @@ impl<'a> Repository<'a> {
             };
         }
         Ok(tasks)
+    }
+    pub(crate) fn ready(
+        &self,
+        project: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Task>, PunchError> {
+        // Keep only IDs and derived columns in the shared dependency scan. Notes and
+        // auxiliary detail are loaded only after filtering, ordering, and LIMIT.
+        let mut stmt = self.db.prepare(
+            "WITH task_columns AS (
+                SELECT t.id, CASE
+                    WHEN t.kind='local' THEN t.local_column
+                    WHEN g.task_id IS NULL THEN 'todo'
+                    WHEN (t.kind='pr' AND g.state='MERGED') OR
+                         (t.kind='issue' AND g.state='CLOSED' AND g.linked_pr_state='MERGED') THEN 'shipped'
+                    WHEN g.state='CLOSED' THEN 'done'
+                    WHEN t.kind='pr' AND g.state='OPEN' THEN
+                        CASE WHEN g.review_decision='CHANGES_REQUESTED' OR g.is_draft=1 THEN 'doing' ELSE 'review' END
+                    WHEN t.kind='issue' AND g.linked_pr_state='OPEN' THEN
+                        CASE WHEN g.linked_pr_review='CHANGES_REQUESTED' OR g.linked_pr_draft=1 THEN 'doing' ELSE 'review' END
+                    WHEN t.kind='issue' AND g.state='OPEN' AND json_array_length(g.assignees)>0 THEN 'doing'
+                    ELSE 'todo' END AS column
+                FROM tasks t LEFT JOIN gh_cache g ON g.task_id=t.id
+            )
+            SELECT t.id FROM tasks t JOIN projects p ON p.id=t.project_id
+            JOIN task_columns c ON c.id=t.id
+            WHERE c.column='todo' AND t.archived=0 AND p.archived=0
+                AND (?1 IS NULL OR p.slug=?1)
+                AND NOT EXISTS (
+                    SELECT 1 FROM task_after a JOIN task_columns d ON d.id=a.after_id
+                    WHERE a.task_id=t.id AND d.column NOT IN ('done','shipped')
+                )
+            ORDER BY t.priority, t.due IS NULL, t.due, t.position, t.id LIMIT ?2"
+        )?;
+        let limit = limit
+            .and_then(|n| i64::try_from(n).ok())
+            .unwrap_or(i64::MAX);
+        let ids = stmt
+            .query_map(params![project, limit], |r| r.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                self.task(id)?
+                    .ok_or_else(|| PunchError::storage("ready task disappeared"))
+            })
+            .collect()
     }
     pub(crate) fn insert_task(&self, task: &Task) -> Result<i64, PunchError> {
         self.db.execute("INSERT INTO tasks(project_id,kind,title,notes,local_column,priority,due,assignee,assignee_kind,slot,position,created_at,updated_at) VALUES(?1,'local',?2,?3,'todo',?4,?5,?6,?7,?8,?9,?10,?10)",params![task.project_id,task.title,task.notes,task.priority.0,task.due,task.assignee,task.assignee_kind.map(|v|v.to_string()),task.slot,task.position,task.created_at])?;
