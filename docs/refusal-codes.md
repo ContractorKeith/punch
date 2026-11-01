@@ -21,7 +21,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `after-cycle` | The dependency would create a cycle. Exit 1. |
 | `invalid-input` | Invalid arguments, date, priority, or plan JSON. Exit 2. |
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
-| `storage-failed` | Filesystem, SQLite, or serialization failure. Read back before retrying a write. Exit 3. |
+| `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs. Read back before retrying a write. Exit 3. |
 
 Success, including a no-op, exits 0. A successful JSON result has exactly
 `ok`, `changed`, `data`, and `warnings`. Task creation returns
@@ -35,8 +35,8 @@ Malformed top-level JSON exits 2 without adding any tasks. A storage failure
 rolls back the entire plan and exits 3 with a refusal envelope.
 
 Help/version requests exit 0; with `--json`, their text is the success envelope's
-`data` string. Without a subcommand, punch prints help without opening a store.
+`data` string. `punch --help` prints help without opening a store.
 
-Phase 2: without a subcommand, an interactive terminal opens the board. Bare
+Without a subcommand, an interactive terminal opens the board. Bare
 `punch --json` retains the help envelope; `punch board --json` exits 2 because
-the board is interactive. `punch --help` still prints help without a store.
+the board is interactive.

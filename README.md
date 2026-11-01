@@ -10,7 +10,7 @@ License: MIT.
 
 ## Usage
 
-Phase 1 provides the local store and CLI. Bare `punch` prints help.
+The local store and CLI support projects, tasks, dependencies, and agent-safe writes.
 
 ```bash
 punch project add demo --name "Demo project"
@@ -41,12 +41,15 @@ Import a JSON array with `punch add --file plan.json` (or `--file -` for stdin):
 Each plan item reports created, existing, or failed. Valid items commit in one
 transaction; validation failures exit 1. See [refusal codes and output contract](docs/refusal-codes.md).
 
+Reads use deferred transactions, so they keep working while another process
+holds the WAL write lock. Mutations serialize in immediate transactions.
+`show` loads one task; `ready --limit N` loads full details only for its results.
+
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. GitHub synchronization, the board, MCP, and Basecamp
-integration arrive in later phases.
+temporary directory. GitHub synchronization, MCP, and Basecamp integration are planned.
 
-## Board (phase 2)
+## Board
 
 Bare `punch` and `punch board` open the interactive board in a terminal.
 Use `h/l` for columns, `j/k` for cards, `p` for projects, `/` for text filtering,

@@ -12,7 +12,7 @@ pub fn list(
     _actor: &Actor,
     args: List,
 ) -> Result<Outcome<Vec<Task>>, PunchError> {
-    store.transaction(|repo| {
+    store.read_transaction(|repo| {
         if let Some(p) = &args.project {
             find_project(repo, p)?;
         }

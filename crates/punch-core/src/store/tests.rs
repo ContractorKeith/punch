@@ -445,6 +445,321 @@ fn github_cards_refuse_manual_moves_and_title_edits() {
 }
 
 #[test]
+fn first_wal_switch_waits_for_readers() {
+    isolated(|path| {
+        // A competing opener can retain a rollback-journal read lock after migration.
+        drop(Store::open_at(path).unwrap());
+        let db = Connection::open(path.join("punch.db")).unwrap();
+        db.pragma_update(None, "journal_mode", "DELETE").unwrap();
+        db.execute_batch("BEGIN; SELECT * FROM schema_version;")
+            .unwrap();
+        let root = path.to_owned();
+        let (send, recv) = std::sync::mpsc::channel();
+        let opener = std::thread::spawn(move || {
+            send.send(Store::open_at(&root).map(|_| ())).unwrap();
+        });
+        assert!(matches!(
+            recv.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        db.execute_batch("COMMIT").unwrap();
+        recv.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        opener.join().unwrap();
+    });
+}
+
+#[test]
+fn concurrent_first_opens_serialize() {
+    for _ in 0..100 {
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let openers: Vec<_> = (0..8)
+            .map(|_| {
+                let root = dir.path().to_owned();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut store = Store::open_at(&root)?;
+                    ops::project_add(
+                        &mut store,
+                        &Actor::Person,
+                        ops::ProjectAdd {
+                            slug: "demo".into(),
+                            name: None,
+                            github: None,
+                            scope: None,
+                        },
+                    )
+                })
+            })
+            .collect();
+        for opener in openers {
+            opener.join().unwrap().unwrap();
+        }
+    }
+}
+
+#[test]
+fn add_at_max_task_id_returns_storage_refusal() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "last");
+        store
+            .connection
+            .execute("UPDATE tasks SET id=?1", [i64::MAX])
+            .unwrap();
+        let error = ops::add(
+            &mut store,
+            &Actor::Person,
+            ops::Add {
+                project: "demo".into(),
+                title: "next".into(),
+                notes: String::new(),
+                priority: Priority(2),
+                due: None,
+                after: vec![],
+                assignee: None,
+                agent: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "storage-failed");
+        assert_eq!(error.exit_code, 3);
+        assert_eq!(
+            store
+                .connection
+                .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    });
+}
+
+#[test]
+fn archive_and_unarchive_bump_revision_only_on_change() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        assert_eq!(add(&mut store, "work").revision, 1);
+        for (archived, revision) in [(true, 2), (false, 3)] {
+            for changed in [true, false] {
+                let before = store.connection.total_changes();
+                let result = if archived {
+                    ops::archive(&mut store, &Actor::Person, "t1")
+                } else {
+                    ops::unarchive(&mut store, &Actor::Person, "t1")
+                }
+                .unwrap();
+                assert_eq!(result.changed, changed);
+                assert_eq!(result.data.revision, revision);
+                let persisted = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+                assert_eq!(persisted.revision, revision);
+                assert_eq!(persisted.archived, archived);
+                if !changed {
+                    assert_eq!(store.connection.total_changes(), before);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn show_reads_only_the_referenced_task() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "wanted");
+        add(&mut store, "unrelated");
+        // Unrelated detail must not be decoded by a single-task read.
+        store
+            .connection
+            .execute("UPDATE tasks SET notes=x'80' WHERE id=2", [])
+            .unwrap();
+        for reference in ["t1", "1"] {
+            assert_eq!(
+                ops::show(&mut store, &Actor::Person, reference)
+                    .unwrap()
+                    .data
+                    .title,
+                "wanted"
+            );
+        }
+        github_issue(&mut store);
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "demo#566")
+                .unwrap()
+                .data
+                .gh_number,
+            Some(566)
+        );
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "missing")
+                .unwrap_err()
+                .code,
+            UNKNOWN_TASK
+        );
+    });
+}
+
+#[test]
+fn ready_filters_and_limits_before_loading_details() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "blocked");
+        add(&mut store, "wanted");
+        add(&mut store, "beyond limit");
+        store.connection.execute_batch("INSERT INTO task_after VALUES(1,3); UPDATE tasks SET notes=x'80' WHERE id IN (1,3);").unwrap();
+        let ready = ops::ready(
+            &mut store,
+            &Actor::Person,
+            ops::Ready {
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].title, "wanted");
+        assert!(
+            ops::ready(
+                &mut store,
+                &Actor::Person,
+                ops::Ready {
+                    limit: Some(0),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data
+            .is_empty()
+        );
+    });
+}
+
+#[test]
+fn ready_sql_matches_derived_columns_for_github_states() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        let mut number = 0;
+        for kind in ["issue", "pr"] {
+            for state in ["OPEN", "CLOSED", "MERGED"] {
+                for linked in [None, Some("OPEN"), Some("CLOSED"), Some("MERGED")] {
+                    for assigned in ["[]", "[\"keith\"]"] {
+                        for draft in [false, true] {
+                            for review in [None, Some("CHANGES_REQUESTED")] {
+                                number += 1;
+                                store.connection.execute("INSERT INTO tasks(project_id,kind,gh_number,title,position,created_at,updated_at) VALUES(1,?1,?2,'card',?2,'now','now')", rusqlite::params![kind,number]).unwrap();
+                                let id = store.connection.last_insert_rowid();
+                                store.connection.execute("INSERT INTO gh_cache(task_id,state,assignees,is_draft,review_decision,linked_pr_state,linked_pr_draft,linked_pr_review,url,fetched_at) VALUES(?1,?2,?3,?4,?5,?6,?4,?5,'url','now')", rusqlite::params![id,state,assigned,draft,review,linked]).unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data
+        .into_iter()
+        .filter(|t| t.column == Column::Todo)
+        .map(|t| t.id)
+        .collect();
+        let actual: Vec<_> = ops::ready(&mut store, &Actor::Person, ops::Ready::default())
+            .unwrap()
+            .data
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(actual, expected);
+    });
+}
+
+#[test]
+fn read_ops_succeed_while_another_connection_holds_write_lock() {
+    isolated(|path| {
+        let mut writer = Store::open_at(path).unwrap();
+        project(&mut writer);
+        add(&mut writer, "committed");
+        let mut reader = Store::open_at(path).unwrap();
+        // Fail immediately if an operation attempts to acquire the writer lock.
+        reader.connection.busy_timeout(Duration::ZERO).unwrap();
+        let tx = writer
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        tx.execute("UPDATE tasks SET title='uncommitted' WHERE id=1", [])
+            .unwrap();
+        assert_eq!(
+            ops::list(&mut reader, &Actor::Person, ops::List::default())
+                .unwrap()
+                .data[0]
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::show(&mut reader, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::ready(&mut reader, &Actor::Person, ops::Ready::default())
+                .unwrap()
+                .data[0]
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::project_list(&mut reader, &Actor::Person).unwrap().data[0].slug,
+            "demo"
+        );
+        // Mutations must still serialize behind the writer.
+        assert_eq!(
+            ops::archive(&mut reader, &Actor::Person, "t1")
+                .unwrap_err()
+                .exit_code,
+            3
+        );
+        tx.rollback().unwrap();
+    });
+}
+
+#[test]
+fn opening_current_store_does_not_wait_for_write_lock() {
+    isolated(|path| {
+        let mut writer = Store::open_at(path).unwrap();
+        project(&mut writer);
+        let tx = writer
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let start = Instant::now();
+        let mut reader = Store::open_at(path).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            ops::project_list(&mut reader, &Actor::Person)
+                .unwrap()
+                .data
+                .len(),
+            1
+        );
+        tx.rollback().unwrap();
+    });
+}
+
+#[test]
 fn data_version_changes_only_for_commits_from_another_connection() {
     isolated(|_| {
         let mut watcher = Store::open().unwrap();

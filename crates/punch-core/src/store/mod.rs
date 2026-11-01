@@ -5,14 +5,13 @@ pub(crate) use queries::Repository;
 use rusqlite::{Connection, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
 
 pub struct Store {
     connection: Connection,
-    // Consumed inside the next operation transaction, before its reads or writes.
     expected_revision: Option<(i64, i64)>,
 }
 impl Store {
@@ -31,18 +30,10 @@ impl Store {
         connection.busy_timeout(Duration::from_millis(5000))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         // Check the version before changing journal mode on an unsupported store.
-        {
+        if schema_version(&connection)? != MIGRATIONS.len() as i64 {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version')", [], |r| r.get(0))?;
-            let version: i64 = if exists {
-                tx.query_row(
-                    "SELECT COALESCE(MAX(version),0) FROM schema_version",
-                    [],
-                    |r| r.get(0),
-                )?
-            } else {
-                0
-            };
+            // Another opener may have migrated while this connection waited.
+            let version = schema_version(&tx)?;
             if version > MIGRATIONS.len() as i64 {
                 return Err(PunchError {
                     exit_code: 3,
@@ -67,7 +58,22 @@ impl Store {
             }
             tx.commit()?;
         }
-        connection.pragma_update(None, "journal_mode", "WAL")?;
+        // Journal-mode changes can return BUSY without calling SQLite's busy handler.
+        let deadline = Instant::now() + Duration::from_millis(5000);
+        loop {
+            match connection.pragma_update(None, "journal_mode", "WAL") {
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if error.code == rusqlite::ErrorCode::DatabaseBusy
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                result => {
+                    result?;
+                    break;
+                }
+            }
+        }
         Ok(Self {
             connection,
             expected_revision: None,
@@ -91,6 +97,14 @@ impl Store {
         result
     }
     /// Serialize reads and writes at the same consistent operation boundary.
+    /// Read a consistent WAL snapshot without reserving the write lock.
+    pub(crate) fn read_transaction<T>(
+        &mut self,
+        f: impl FnOnce(&Repository<'_>) -> Result<T, PunchError>,
+    ) -> Result<T, PunchError> {
+        self.transaction_with_behavior(TransactionBehavior::Deferred, f)
+    }
+    /// Serialize mutating operations before reading their current state.
     pub(crate) fn transaction<T>(
         &mut self,
         f: impl FnOnce(&Repository<'_>) -> Result<T, PunchError>,
@@ -116,6 +130,33 @@ impl Store {
         let result = f(&repo)?;
         tx.commit()?;
         Ok(result)
+    }
+    fn transaction_with_behavior<T>(
+        &mut self,
+        behavior: TransactionBehavior,
+        f: impl FnOnce(&Repository<'_>) -> Result<T, PunchError>,
+    ) -> Result<T, PunchError> {
+        let tx = self.connection.transaction_with_behavior(behavior)?;
+        let result = f(&Repository::new(&tx))?;
+        tx.commit()?;
+        Ok(result)
+    }
+}
+
+fn schema_version(connection: &Connection) -> Result<i64, PunchError> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version')",
+        [],
+        |r| r.get(0),
+    )?;
+    if exists {
+        Ok(connection.query_row(
+            "SELECT COALESCE(MAX(version),0) FROM schema_version",
+            [],
+            |r| r.get(0),
+        )?)
+    } else {
+        Ok(0)
     }
 }
 

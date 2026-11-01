@@ -349,9 +349,9 @@ fn environment_actor_is_enforced_and_explicit_as_overrides_it() {
     );
 }
 #[test]
-fn explicit_help_and_read_help_do_not_open_store() {
+fn json_help_and_read_help_do_not_open_store() {
     let dir = TempDir::new().unwrap();
-    run(&dir, &["--help"]).success();
+    run(&dir, &["--json"]).success();
     for command in [
         vec!["list", "--help"],
         vec!["show", "--help"],
@@ -540,6 +540,17 @@ fn local_assignee_identity_and_archive_control_add_idempotence() {
         )["data"]["existing"],
         false
     );
+}
+
+#[test]
+fn bare_and_explicit_help_use_punch_name() {
+    let dir = TempDir::new().unwrap();
+    for args in [vec!["--json"], vec!["--help"]] {
+        let output = run(&dir, &args).success().get_output().stdout.clone();
+        let help = String::from_utf8(output).unwrap();
+        assert!(help.contains("Usage: punch [OPTIONS] [COMMAND]"), "{help}");
+    }
+    assert!(!dir.path().join("punch.db").exists());
 }
 
 #[test]
