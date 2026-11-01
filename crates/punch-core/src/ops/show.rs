@@ -5,7 +5,7 @@ pub fn show(
     _actor: &Actor,
     reference: &str,
 ) -> Result<Outcome<Task>, PunchError> {
-    store.transaction(|repo| {
+    store.read_transaction(|repo| {
         let id = if let Some((slug, number)) = reference.split_once('#') {
             match number.parse::<i64>() {
                 Ok(number) => repo.github_task_id(slug, number)?,

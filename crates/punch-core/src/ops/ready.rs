@@ -11,7 +11,7 @@ pub fn ready(
     _actor: &Actor,
     args: Ready,
 ) -> Result<Outcome<Vec<Task>>, PunchError> {
-    store.transaction(|repo| {
+    store.read_transaction(|repo| {
         if let Some(p) = &args.project {
             find_project(repo, p)?;
         }

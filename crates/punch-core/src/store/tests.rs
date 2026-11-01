@@ -684,3 +684,77 @@ fn ready_sql_matches_derived_columns_for_github_states() {
         assert_eq!(actual, expected);
     });
 }
+
+#[test]
+fn read_ops_succeed_while_another_connection_holds_write_lock() {
+    isolated(|path| {
+        let mut writer = Store::open_at(path).unwrap();
+        project(&mut writer);
+        add(&mut writer, "committed");
+        let mut reader = Store::open_at(path).unwrap();
+        // Fail immediately if an operation attempts to acquire the writer lock.
+        reader.connection.busy_timeout(Duration::ZERO).unwrap();
+        let tx = writer
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        tx.execute("UPDATE tasks SET title='uncommitted' WHERE id=1", [])
+            .unwrap();
+        assert_eq!(
+            ops::list(&mut reader, &Actor::Person, ops::List::default())
+                .unwrap()
+                .data[0]
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::show(&mut reader, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::ready(&mut reader, &Actor::Person, ops::Ready::default())
+                .unwrap()
+                .data[0]
+                .title,
+            "committed"
+        );
+        assert_eq!(
+            ops::project_list(&mut reader, &Actor::Person).unwrap().data[0].slug,
+            "demo"
+        );
+        // Mutations must still serialize behind the writer.
+        assert_eq!(
+            ops::archive(&mut reader, &Actor::Person, "t1")
+                .unwrap_err()
+                .exit_code,
+            3
+        );
+        tx.rollback().unwrap();
+    });
+}
+
+#[test]
+fn opening_current_store_does_not_wait_for_write_lock() {
+    isolated(|path| {
+        let mut writer = Store::open_at(path).unwrap();
+        project(&mut writer);
+        let tx = writer
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let start = Instant::now();
+        let mut reader = Store::open_at(path).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            ops::project_list(&mut reader, &Actor::Person)
+                .unwrap()
+                .data
+                .len(),
+            1
+        );
+        tx.rollback().unwrap();
+    });
+}
