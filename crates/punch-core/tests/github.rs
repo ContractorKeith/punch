@@ -628,3 +628,38 @@ fn resync_without_github_changes_keeps_revision_and_reports_unchanged() {
         );
     });
 }
+
+#[test]
+fn slow_sync_keeps_reads_and_local_add_available() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use std::time::{Duration, Instant};
+        let (dir, store) = setup();
+        std::env::set_current_dir(dir.path()).unwrap();
+        // The child gh signals after sync has reached the external boundary.
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(state.join("slow"), "").unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut store = store;
+            ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap()
+        });
+        let start = Instant::now();
+        while !state.join("waiting").exists() {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut second = Store::open_at(dir.path()).unwrap();
+        let start = Instant::now();
+        assert!(ops::list(&mut second, &Actor::Person, ops::List::default()).is_ok());
+        let args =
+            serde_json::from_value(serde_json::json!({"project":"demo","title":"during sync"}))
+                .unwrap();
+        let added = ops::add(&mut second, &Actor::Person, args);
+        let elapsed = start.elapsed();
+        std::fs::write(state.join("release"), "").unwrap();
+        let result = worker.join().unwrap();
+        assert!(added.is_ok(), "{added:?}");
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert_eq!(result.data[0].status, "synced");
+    });
+}

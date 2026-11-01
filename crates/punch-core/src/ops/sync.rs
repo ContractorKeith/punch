@@ -4,7 +4,7 @@ use crate::{
     error::*,
     github::{Gh, Item},
     model::*,
-    store::{Repository, Store},
+    store::Store,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -23,7 +23,7 @@ pub fn sync(
     gh: &dyn Gh,
     project: Option<&str>,
 ) -> Result<Outcome<Vec<SyncResult>>, PunchError> {
-    let projects = store.transaction(|repo| {
+    let projects = store.read_transaction(|repo| {
         if let Some(p) = project {
             find_project(repo, p)?;
         }
@@ -37,7 +37,19 @@ pub fn sync(
     })?;
     let mut results = vec![];
     for p in projects {
-        let result = store.transaction(|repo| sync_project(repo, gh, &p));
+        let result = (|| {
+            let existing = store.read_transaction(|repo| Ok(repo.tasks()?.into_iter()
+                .filter(|t| t.project_id == p.id && t.kind != Kind::Local).collect::<Vec<_>>()))?;
+            let fetched = fetch_project(gh, &p, &existing)?;
+            store.transaction(|repo| {
+                let timestamp = now()?;
+                let mut changed = false;
+                for (item, linked) in &fetched {
+                    changed |= repo.upsert_github(&p, item, &item.cache(linked.as_ref(), &timestamp), &timestamp)?;
+                }
+                Ok((changed, fetched.len()))
+            })
+        })();
         results.push(match result {
             Ok((changed, cards)) => SyncResult {
                 project: p.slug,
@@ -57,22 +69,14 @@ pub fn sync(
     }
     Ok(Outcome::new(results.iter().any(|r| r.changed), results))
 }
-fn sync_project(
-    repo: &Repository<'_>,
+fn fetch_project(
     gh: &dyn Gh,
     p: &Project,
-) -> Result<(bool, usize), PunchError> {
-    let github = p
-        .github_repo
-        .as_deref()
-        .ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
-    let existing: Vec<_> = repo
-        .tasks()?
-        .into_iter()
-        .filter(|t| t.project_id == p.id && t.kind != Kind::Local)
-        .collect();
+    existing: &[Task],
+) -> Result<Vec<(Item, Option<Item>)>, PunchError> {
+    let github = p.github_repo.as_deref().ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
     let mut items = gh.list(github, p.sync_scope)?;
-    for task in &existing {
+    for task in existing {
         let number = task
             .gh_number
             .ok_or_else(|| PunchError::storage("missing GitHub number"))?;
@@ -86,9 +90,7 @@ fn sync_project(
         .filter(|i| i.kind == Kind::Issue)
         .map(|i| i.number)
         .collect();
-    let mut changed = false;
-    let mut count = 0;
-    let timestamp = now()?;
+    let mut fetched = vec![];
     for item in &items {
         let stored = existing
             .iter()
@@ -102,16 +104,11 @@ fn sync_project(
         } else {
             None
         };
-        changed |= repo.upsert_github(
-            p,
-            item,
-            &item.cache(linked.as_ref(), &timestamp),
-            &timestamp,
-        )?;
-        count += 1;
+        fetched.push((item.clone(), linked));
     }
-    Ok((changed, count))
+    Ok(fetched)
 }
+
 pub(super) fn linked_pr(gh: &dyn Gh, repo: &str, issue: i64) -> Result<Option<Item>, PunchError> {
     Ok(gh
         .linked(repo, issue)?

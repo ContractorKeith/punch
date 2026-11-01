@@ -1,6 +1,10 @@
 #!/bin/sh
 # No network: all gh calls in this subprocess terminate here.
 printf '%s\n' "$*" >> "$PUNCH_STATE_DIR/gh-calls"
+if test -f "$PUNCH_STATE_DIR/slow"; then
+  touch "$PUNCH_STATE_DIR/waiting"
+  while ! test -f "$PUNCH_STATE_DIR/release"; do sleep 0.05; done
+fi
 case "${PUNCH_GH_FAILURE:-}" in
   offline) printf '%s\n' 'network connection failed: fixture stderr' >&2; exit 1 ;;
   denied) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;
