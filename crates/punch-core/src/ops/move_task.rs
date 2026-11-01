@@ -1,5 +1,5 @@
 //! Local column changes with actor and dependency checks.
-use super::{project::now, task::resolve};
+use super::{project::now, task::{bump_revision, resolve}};
 use crate::{error::*, model::*, store::Store};
 pub fn move_task(
     store: &mut Store,
@@ -41,7 +41,7 @@ pub fn move_task(
         }
         task.column = column;
         task.local_column = Some(column);
-        task.revision += 1;
+        bump_revision(&mut task)?;
         task.updated_at = now()?;
         repo.save_task(&task)?;
         Ok(Outcome::new(true, task))

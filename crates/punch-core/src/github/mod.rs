@@ -39,6 +39,19 @@ impl Item {
                 "invalid GitHub card identity or state",
             ));
         }
+        if kind == Kind::Pr
+            && (self.is_draft.is_none()
+                || !matches!(
+                    self.review_decision.as_deref(),
+                    None | Some("APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED")
+                ))
+        {
+            return Err(PunchError::refusal(
+                crate::error::GH_FAILED,
+                "gh",
+                "invalid GitHub PR draft or review state",
+            ));
+        }
         Ok(())
     }
 

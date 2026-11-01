@@ -89,7 +89,8 @@ fn set_claim(
             });
         }
         if task != before {
-            task.revision = old.revision + 1;
+            task.revision = old.revision;
+            super::bump_revision(&mut task)?;
             task.updated_at = now()?;
             repo.save_task(&task)?;
             changed = true;

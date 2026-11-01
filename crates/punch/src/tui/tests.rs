@@ -640,3 +640,120 @@ fn detail_pane_snapshot_shows_all_task_and_github_fields() {
         check_snapshot("detail", text, include_str!("snapshots/detail.txt"));
     });
 }
+
+#[test]
+fn event_dispatch_preserves_modifiers_and_ignores_key_releases() {
+    isolated(|_| {
+        use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyModifiers as M};
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.mode = Mode::Filter("keep".into());
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('v'), M::ALT)),
+        );
+        assert_eq!(board.mode, Mode::Filter("keep".into()));
+        let mut release = KeyEvent::new(Char('c'), M::CONTROL);
+        release.kind = KeyEventKind::Release;
+        super::dispatch_event(&mut board, &mut store, Event::Key(release));
+        assert!(!board.quit);
+        super::dispatch_event(&mut board, &mut store, Event::Resize(80, 24));
+        assert_eq!(board.mode, Mode::Filter("keep".into()));
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('A'), M::SHIFT)),
+        );
+        assert_eq!(board.mode, Mode::Filter("keepA".into()));
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('c'), M::CONTROL)),
+        );
+        assert!(board.quit, "event loop lost Ctrl-C modifiers");
+    });
+}
+
+#[test]
+fn successful_action_shows_all_warnings_and_keeps_the_local_change() {
+    isolated(|_| {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        let snapshot = board.selected().unwrap().clone();
+        let mut outcome = ops::update_task(
+            &mut store,
+            &Actor::Person,
+            &snapshot,
+            ops::Update::Move(Column::Doing),
+        )
+        .unwrap();
+        // This phase has no mirror adapter; supply opaque warnings at the outcome boundary.
+        outcome.warnings = vec!["mirror unavailable".into(), "unmapped destination".into()];
+        board.complete_action(&mut store, outcome).unwrap();
+        assert_eq!(board.selected().unwrap().column, Column::Doing);
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .column,
+            Column::Doing
+        );
+        assert_eq!(
+            board.status_text(),
+            Some("mirror unavailable; unmapped destination")
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal
+            .draw(|frame| super::view::draw(frame, &board))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("mirror unavailable; unmapped destination"));
+        board.key(Char('P').into(), &mut store);
+        assert!(
+            board.status_text().is_none(),
+            "a warning-free success clears the previous status"
+        );
+    });
+}
+
+#[test]
+fn unchanged_editor_notes_explain_wait_requirement_without_a_write() {
+    isolated(|_| {
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.key(Char('e').into(), &mut store);
+        let snapshot = board.edit_request.take().unwrap();
+        let notes = super::editor::edit_with("true", &snapshot.notes).unwrap();
+        board.save_notes(&mut store, &snapshot, notes);
+        assert_eq!(
+            board.status_text(),
+            Some("No notes changed; $EDITOR must wait for the file to close")
+        );
+        let after = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        assert_eq!(after.notes, snapshot.notes);
+        assert_eq!(after.revision, snapshot.revision);
+        board.save_notes(&mut store, &snapshot, "updated notes".into());
+        assert!(board.status_text().is_none());
+        assert_eq!(board.selected().unwrap().notes, "updated notes");
+    });
+}
+
+#[test]
+fn editor_documentation_requires_waiting_for_the_file_to_close() {
+    let readme = include_str!("../../../../README.md");
+    assert!(readme.contains("$EDITOR must wait for the file to close"));
+    for command in ["open -W -t", "code --wait", "subl -w"] {
+        assert!(
+            readme.contains(command),
+            "missing editor example: {command}"
+        );
+    }
+}
