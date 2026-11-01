@@ -723,3 +723,37 @@ fn successful_action_shows_all_warnings_and_keeps_the_local_change() {
         );
     });
 }
+
+#[test]
+fn unchanged_editor_notes_explain_wait_requirement_without_a_write() {
+    isolated(|_| {
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.key(Char('e').into(), &mut store);
+        let snapshot = board.edit_request.take().unwrap();
+        let notes = super::editor::edit_with("true", &snapshot.notes).unwrap();
+        board.save_notes(&mut store, &snapshot, notes);
+        assert_eq!(
+            board.status_text(),
+            Some("No notes changed; $EDITOR must wait for the file to close")
+        );
+        let after = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        assert_eq!(after.notes, snapshot.notes);
+        assert_eq!(after.revision, snapshot.revision);
+        board.save_notes(&mut store, &snapshot, "updated notes".into());
+        assert!(board.status_text().is_none());
+        assert_eq!(board.selected().unwrap().notes, "updated notes");
+    });
+}
+
+#[test]
+fn editor_documentation_requires_waiting_for_the_file_to_close() {
+    let readme = include_str!("../../../../README.md");
+    assert!(readme.contains("$EDITOR must wait for the file to close"));
+    for command in ["open -W -t", "code --wait", "subl -w"] {
+        assert!(
+            readme.contains(command),
+            "missing editor example: {command}"
+        );
+    }
+}

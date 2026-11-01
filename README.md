@@ -63,5 +63,10 @@ Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
 then `y`. Adding from “all” first asks for a project; new cards start in Todo.
 Notes edits and archive confirmations retain the original revision, so an
 external update produces `stale` and reloads instead of overwriting it. Other
-refusals flash for five seconds. `j/k` scroll long detail and help panes;
+refusals and successful-action warnings flash for five seconds. `j/k` scroll long detail and help panes;
 `Esc` closes a pane or cancels input.
+
+$EDITOR must wait for the file to close before returning. For GUI editors, use
+`EDITOR='open -W -t'` on macOS, `EDITOR='code --wait'`, or `EDITOR='subl -w'`.
+If the editor returns with unchanged notes, the board flashes that no change
+was made and reminds you of the wait requirement.

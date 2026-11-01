@@ -182,6 +182,13 @@ impl Board {
         }
     }
     pub fn save_notes(&mut self, store: &mut Store, snapshot: &Task, notes: String) {
+        if notes == snapshot.notes {
+            self.status = Some((
+                "No notes changed; $EDITOR must wait for the file to close".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
         self.apply(
             store,
             snapshot,
