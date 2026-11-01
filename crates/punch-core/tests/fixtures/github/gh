@@ -1,0 +1,82 @@
+#!/bin/sh
+# No network: all gh calls in this subprocess terminate here.
+printf '%s\n' "$*" >> "$PUNCH_STATE_DIR/gh-calls"
+if test -f "$PUNCH_STATE_DIR/slow"; then
+  touch "$PUNCH_STATE_DIR/waiting"
+  while ! test -f "$PUNCH_STATE_DIR/release"; do sleep 0.05; done
+fi
+case "$*" in
+  *'pr list'*) if test -f "$PUNCH_STATE_DIR/pr-list-response"; then cat "$PUNCH_STATE_DIR/pr-list-response"; exit 0; fi ;;
+  *'pr view'*) if test -f "$PUNCH_STATE_DIR/pr-response"; then cat "$PUNCH_STATE_DIR/pr-response"; exit 0; fi ;;
+  *view*) if test -f "$PUNCH_STATE_DIR/view-response"; then cat "$PUNCH_STATE_DIR/view-response"; exit 0; fi ;;
+esac
+case "$*" in
+  *timelineItems*) if test -f "$PUNCH_STATE_DIR/timeline-response"; then cat "$PUNCH_STATE_DIR/timeline-response"; exit 0; fi ;;
+  *closingIssuesReferences*) if test -f "$PUNCH_STATE_DIR/closing-response"; then cat "$PUNCH_STATE_DIR/closing-response"; exit 0; fi ;;
+esac
+if test -f "$PUNCH_STATE_DIR/cursor-mode"; then
+  count=0
+  if test -f "$PUNCH_STATE_DIR/page-count"; then count=$(cat "$PUNCH_STATE_DIR/page-count"); fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$PUNCH_STATE_DIR/page-count"
+  mode=$(cat "$PUNCH_STATE_DIR/cursor-mode")
+  next=true
+  case "$mode" in
+    repeat) cursor=A; if test "$count" -gt 2; then next=false; fi ;;
+    cycle) cursor=A; if test "$count" -eq 2; then cursor=B; fi; if test "$count" -gt 3; then next=false; fi ;;
+    unique) cursor=$count; if test "$count" -gt 101; then next=false; fi ;;
+  esac
+  printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$cursor"
+  exit 0
+fi
+case "${PUNCH_GH_FAILURE:-}" in
+  offline) printf '%s\n' 'network connection failed: fixture stderr' >&2; exit 1 ;;
+  denied) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;
+  shape)
+    case "$*" in
+      *view*) printf '%s\n' '[]'; exit 0 ;;
+    esac ;;
+  malformed)
+    case "$*" in
+      *view*) printf '%s\n' 'invalid JSON from gh'; exit 0 ;;
+    esac ;;
+esac
+case "$*" in
+  *bad/repo*) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;
+esac
+case "$*" in
+  *'issue edit'*)
+    case "$*" in
+      *--add-assignee*) touch "$PUNCH_STATE_DIR/claimed" ;;
+      *--remove-assignee*) rm -f "$PUNCH_STATE_DIR/claimed" ;;
+    esac
+    exit 0 ;;
+  *'issue list'*--assignee*) printf '%s\n' '[]' ;;
+  *'issue list'*) cat "$PUNCH_GH_FIXTURES/recorded-issues.json" ;;
+  *'pr list'*) cat "$PUNCH_GH_FIXTURES/recorded-prs.json" ;;
+  *'issue view'*)
+    if test -f "$PUNCH_STATE_DIR/claimed"; then
+      printf '%s\n' '{"number":14895,"title":"claimed issue","state":"OPEN","assignees":[{"login":"keith"}],"updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/issues/14895"}'
+    else
+      printf '%s\n' '{"number":14895,"title":"unclaimed issue","state":"OPEN","assignees":[],"updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/issues/14895"}'
+    fi ;;
+  *'pr view 900 '*)
+    printf '%s\n' '{"number":900,"title":"cross-repo closing PR","state":"OPEN","assignees":[],"isDraft":false,"reviewDecision":"REVIEW_REQUIRED","updatedAt":"2026-11-02T00:00:00Z","url":"https://github.com/other/repo/pull/900"}' ;;
+  *'pr view'*)
+    printf '%s\n' '{"number":14846,"title":"linked PR","state":"OPEN","assignees":[],"isDraft":false,"reviewDecision":"REVIEW_REQUIRED","updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/pull/14846"}' ;;
+  *'api graphql'*'viewer { login }'*)
+    if test -f "$PUNCH_STATE_DIR/viewer-is-author"; then
+      printf '%s\n' '{"data":{"viewer":{"login":"tidy-dev"}}}'
+    else
+      printf '%s\n' '{"data":{"viewer":{"login":"different-user"}}}'
+    fi ;;
+  *'api graphql'*closingIssuesReferences*cursor=next*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":14895,"repository":{"nameWithOwner":"cli/cli"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' ;;
+  *'api graphql'*closingIssuesReferences*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":14895,"repository":{"nameWithOwner":"unrelated/repo"}}],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}}' ;;
+  *'api graphql'*timelineItems*cursor=next*)
+    printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":14846,"repository":{"nameWithOwner":"cli/cli"}}},{"source":{"number":900,"repository":{"nameWithOwner":"other/repo"}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' ;;
+  *'api graphql'*timelineItems*)
+    printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}}' ;;
+  *) printf 'unexpected fake gh arguments: %s\n' "$*" >&2; exit 1 ;;
+esac

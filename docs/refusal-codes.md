@@ -22,6 +22,8 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `invalid-input` | Invalid arguments, date, priority, or plan JSON. Exit 2. |
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
 | `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs/revisions. Read back before retrying a write. Exit 3. |
+| `offline` | A GitHub call failed with a network error; the message preserves gh stderr. Claim/unclaim leave local state unchanged. Exit 1. |
+| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data or PR draft/review fields; the message includes its stderr when gh failed. Claim/unclaim leave local state unchanged. Exit 1. |
 
 Success, including a no-op, exits 0. A successful JSON result has exactly
 `ok`, `changed`, `data`, and `warnings`. Task creation returns
@@ -36,6 +38,12 @@ rolls back the entire plan and exits 3 with a refusal envelope.
 
 Help/version requests exit 0; with `--json`, their text is the success envelope's
 `data` string. `punch --help` prints help without opening a store.
+
+Sync reports a success envelope with per-project
+`{project,status,changed,cards,refusals}` results. `status` is `synced` or
+`failed`; each project's import is atomic. Any failed project makes the command
+exit 3, while successful projects remain committed. An unlinked or archived
+project is skipped. An unknown `-p` project returns `unknown-project`, exit 1.
 
 Without a subcommand, an interactive terminal opens the board. With JSON,
 bare `punch --json` returns the help envelope; `punch board --json` exits 2

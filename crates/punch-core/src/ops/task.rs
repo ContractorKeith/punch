@@ -2,7 +2,7 @@
 use crate::{error::*, model::*};
 
 // Refuse exhausted revisions before any task or dependency rows are saved.
-pub(super) fn bump_revision(task: &mut Task) -> Result<(), PunchError> {
+pub(crate) fn bump_revision(task: &mut Task) -> Result<(), PunchError> {
     task.revision = task
         .revision
         .checked_add(1)

@@ -1,0 +1,286 @@
+{
+  "items": [
+    {
+      "assignees": [],
+      "number": 1,
+      "state": "CLOSED",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 2,
+      "reviewDecision": null,
+      "state": "MERGED",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr"
+    },
+    {
+      "assignees": [
+        {
+          "login": "keith"
+        }
+      ],
+      "number": 3,
+      "state": "CLOSED",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 4,
+      "reviewDecision": "CHANGES_REQUESTED",
+      "state": "CLOSED",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr"
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 5,
+      "reviewDecision": "CHANGES_REQUESTED",
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr"
+    },
+    {
+      "assignees": [],
+      "number": 6,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 7,
+      "reviewDecision": null,
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr"
+    },
+    {
+      "assignees": [
+        {
+          "login": "keith"
+        }
+      ],
+      "number": 8,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "isDraft": true,
+      "number": 9,
+      "reviewDecision": null,
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr"
+    },
+    {
+      "assignees": [],
+      "number": 10,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [
+        {
+          "login": "keith"
+        }
+      ],
+      "number": 11,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "number": 12,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "number": 13,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    },
+    {
+      "assignees": [],
+      "number": 14,
+      "state": "OPEN",
+      "title": "gh skill: lock file ignores XDG_STATE_HOME, so it splits from the Vercel skills CLI lock it is meant to share",
+      "updatedAt": "2026-11-01T09:26:21Z",
+      "url": "https://github.com/cli/cli/issues/14895",
+      "kind": "issue",
+      "isDraft": null,
+      "reviewDecision": null
+    }
+  ],
+  "linked": [
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 101,
+      "reviewDecision": null,
+      "state": "MERGED",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        1
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 103,
+      "reviewDecision": "CHANGES_REQUESTED",
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        3
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 106,
+      "reviewDecision": "CHANGES_REQUESTED",
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        6
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 108,
+      "reviewDecision": null,
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        8
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": true,
+      "number": 110,
+      "reviewDecision": null,
+      "state": "OPEN",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        10
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 113,
+      "reviewDecision": null,
+      "state": "CLOSED",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        13
+      ]
+    },
+    {
+      "assignees": [],
+      "isDraft": false,
+      "number": 114,
+      "reviewDecision": null,
+      "state": "MERGED",
+      "title": "Add shared team PR preparation skill",
+      "updatedAt": "2026-10-28T02:11:55Z",
+      "url": "https://github.com/cli/cli/pull/14846",
+      "kind": "pr",
+      "closes": [
+        14
+      ]
+    }
+  ],
+  "columns": [
+    "shipped",
+    "shipped",
+    "done",
+    "done",
+    "doing",
+    "doing",
+    "review",
+    "review",
+    "doing",
+    "doing",
+    "doing",
+    "todo",
+    "todo",
+    "todo"
+  ]
+}

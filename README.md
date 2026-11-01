@@ -10,7 +10,8 @@ License: MIT.
 
 ## Usage
 
-The local store and CLI support projects, tasks, dependencies, and agent-safe writes.
+The CLI and board support local tasks, GitHub sync, claims, dependencies, and
+agent-safe writes.
 
 ```bash
 punch project add demo --name "Demo project"
@@ -49,7 +50,44 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. GitHub synchronization, MCP, and Basecamp integration are planned.
+temporary directory.
+
+## GitHub sync and claims
+
+```bash
+punch project add cli --github cli/cli --scope all
+punch sync -p cli
+punch list -p cli --json
+punch claim cli#123 --slot worker-1
+punch unclaim cli#123
+```
+
+GitHub access uses the installed `gh` CLI and its authentication. The default
+`assigned` scope pulls open issues assigned to you and open PRs authored by you;
+`all` pulls every open issue and PR. Both refresh stored cards, including closed,
+merged, and archived cards. Archived projects are skipped. Linked closing PRs
+drive issue columns; new PR cards are suppressed when their issue is stored or
+imported in the same sync. Previously imported PR cards retain their identity.
+Sync replaces cached GitHub fields while keeping notes, priority, due dates,
+dependencies, slot, ordering, and archive flags.
+A fetched_at-only refresh reports `changed: false` and keeps task revisions.
+Each project commits atomically; failures are reported alongside
+successful projects, with exit 3 if any project fails. GitHub fetching completes
+before the short local write transaction, so reads and local writes keep working
+during a slow fetch. Each `gh` subprocess has a 30-second timeout (`gh-failed`).
+GraphQL connection walks reject repeated cursors and stop after 100 pages.
+
+Malformed PR or closing-reference numbers fail sync with `gh-failed`, preserving
+the project's cached cards and links. Empty non-PR cross-references are skipped.
+PRs require a boolean draft state and a review decision of null, `APPROVED`,
+`CHANGES_REQUESTED`, or `REVIEW_REQUIRED`; invalid values also fail before import.
+
+For GitHub cards, claim/unclaim first adds/removes `@me` with `gh issue edit`,
+then refreshes the card before committing locally. A remote or refresh failure
+returns `offline` or `gh-failed`, preserving local fields. Local claims use the
+actor label (`person` or the agent's identity) as assignee; `--slot` sets the
+slot separately, defaulting to the agent identity. Unclaim clears the local
+assignee and slot; GitHub assignees always come from the refreshed card.
 
 ## Board
 
