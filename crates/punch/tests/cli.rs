@@ -587,3 +587,36 @@ fn board_documentation_describes_current_entrypoints_once() {
     assert!(contract.contains("bare `punch --json`"));
     assert!(contract.contains("`punch board --json` exits 2"));
 }
+
+#[test]
+fn board_json_refuses_before_opening_any_store() {
+    let dir = TempDir::new().unwrap();
+    let blocked = dir.path().join("file");
+    std::fs::write(&blocked, "not a directory").unwrap();
+    let fresh = dir.path().join("fresh");
+    let newer = dir.path().join("newer");
+    std::fs::create_dir(&newer).unwrap();
+    let db = rusqlite::Connection::open(newer.join("punch.db")).unwrap();
+    db.execute_batch(include_str!(
+        "../../punch-core/src/store/fixtures/newer.sql"
+    ))
+    .unwrap();
+    drop(db);
+    for path in [&blocked, &newer, &fresh] {
+        let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("punch"))
+            .env("PUNCH_STATE_DIR", path)
+            .env_remove("PUNCH_AGENT")
+            .args(["board", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        assert!(out.stderr.is_empty());
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["refusals"][0]["code"], "invalid-input");
+        assert_eq!(
+            value["refusals"][0]["message"],
+            "board is interactive; use list --json"
+        );
+    }
+    assert!(!fresh.exists(), "board --json created the state directory");
+}
