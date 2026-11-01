@@ -674,3 +674,52 @@ fn event_dispatch_preserves_modifiers_and_ignores_key_releases() {
         assert!(board.quit, "event loop lost Ctrl-C modifiers");
     });
 }
+
+#[test]
+fn successful_action_shows_all_warnings_and_keeps_the_local_change() {
+    isolated(|_| {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        let snapshot = board.selected().unwrap().clone();
+        let mut outcome = ops::update_task(
+            &mut store,
+            &Actor::Person,
+            &snapshot,
+            ops::Update::Move(Column::Doing),
+        )
+        .unwrap();
+        // This phase has no mirror adapter; supply opaque warnings at the outcome boundary.
+        outcome.warnings = vec!["mirror unavailable".into(), "unmapped destination".into()];
+        board.complete_action(&mut store, outcome).unwrap();
+        assert_eq!(board.selected().unwrap().column, Column::Doing);
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .column,
+            Column::Doing
+        );
+        assert_eq!(
+            board.status_text(),
+            Some("mirror unavailable; unmapped destination")
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal
+            .draw(|frame| super::view::draw(frame, &board))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("mirror unavailable; unmapped destination"));
+        board.key(Char('P').into(), &mut store);
+        assert!(
+            board.status_text().is_none(),
+            "a warning-free success clears the previous status"
+        );
+    });
+}
