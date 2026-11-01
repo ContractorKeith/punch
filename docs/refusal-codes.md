@@ -51,7 +51,10 @@ sync failures also set `isError: true`; inspect each item's refusals even when
 `ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
 JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`), paths that do not resolve to regular
 files, and plan files over 1 MiB with `invalid-input`
-because stdin carries protocol messages. No phase 4 refusal codes were added.
+because stdin carries protocol messages. Serialized tool results over 4 MiB
+also return `invalid-input` with `isError: true`; narrow the request with a
+project filter, a limit, or show a single task. The cap counts both result
+envelopes and JSON escaping. No phase 4 refusal codes were added.
 
 Without a subcommand, an interactive terminal opens the board. With JSON,
 bare `punch --json` returns the help envelope; `punch board --json` exits 2
