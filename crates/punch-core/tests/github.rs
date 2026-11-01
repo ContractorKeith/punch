@@ -12,6 +12,7 @@ struct Fake {
     links: Vec<Item>,
     failure: RefCell<Option<&'static str>>,
     scopes: RefCell<Vec<SyncScope>>,
+    response: RefCell<Option<Item>>,
 }
 impl Fake {
     fn new(items: Vec<Item>) -> Self {
@@ -20,6 +21,7 @@ impl Fake {
             links: vec![],
             failure: RefCell::new(None),
             scopes: RefCell::new(vec![]),
+            response: RefCell::new(None),
         }
     }
     fn check(&self, stage: &str) -> Result<(), punch_core::error::PunchError> {
@@ -48,6 +50,9 @@ impl Gh for Fake {
     }
     fn get(&self, _: &str, kind: Kind, n: i64) -> Result<Item, punch_core::error::PunchError> {
         self.check("get")?;
+        if let Some(item) = self.response.borrow().as_ref() {
+            return Ok(item.clone());
+        }
         Ok(self
             .items
             .borrow()
@@ -608,6 +613,13 @@ fn sync_rolls_back_cards_inserted_before_a_later_refresh_failure() {
 // revision for stale checks and the Basecamp mirror keys off real changes.
 #[test]
 fn resync_without_github_changes_keeps_revision_and_reports_unchanged() {
+    let readme = include_str!("../../../README.md");
+    assert!(
+        readme.contains(
+            "A fetched_at-only refresh reports `changed: false` and keeps task revisions."
+        )
+    );
+    assert!(!readme.contains("A new fetch timestamp counts as"));
     isolated(|| {
         let (_dir, mut store) = setup();
         let gh =
@@ -626,5 +638,263 @@ fn resync_without_github_changes_keeps_revision_and_reports_unchanged() {
             after.gh_cache.unwrap().fetched_at,
             before.gh_cache.unwrap().fetched_at
         );
+    });
+}
+
+#[test]
+fn slow_sync_keeps_reads_and_local_add_available() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use std::time::{Duration, Instant};
+        let (dir, store) = setup();
+        std::env::set_current_dir(dir.path()).unwrap();
+        // The child gh signals after sync has reached the external boundary.
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(state.join("slow"), "").unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut store = store;
+            ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap()
+        });
+        let start = Instant::now();
+        while !state.join("waiting").exists() {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut second = Store::open_at(dir.path()).unwrap();
+        let start = Instant::now();
+        assert!(ops::list(&mut second, &Actor::Person, ops::List::default()).is_ok());
+        let args =
+            serde_json::from_value(serde_json::json!({"project":"demo","title":"during sync"}))
+                .unwrap();
+        let added = ops::add(&mut second, &Actor::Person, args);
+        let elapsed = start.elapsed();
+        std::fs::write(state.join("release"), "").unwrap();
+        let result = worker.join().unwrap();
+        assert!(added.is_ok(), "{added:?}");
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert_eq!(result.data[0].status, "synced");
+    });
+}
+
+fn reject_refresh(value: serde_json::Value) {
+    use punch_core::github::RealGh;
+    let (_dir, mut store) = setup();
+    let gh = Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+    ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+    let before = ops::list(
+        &mut store,
+        &Actor::Person,
+        ops::List {
+            all: true,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .data;
+    let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+    std::fs::write(state.join("view-response"), value.to_string()).unwrap();
+    assert_eq!(
+        RealGh.get("owner/repo", Kind::Issue, 1).unwrap_err().code,
+        "gh-failed"
+    );
+    for unclaim in [false, true] {
+        let error = if unclaim {
+            ops::unclaim(&mut store, &Actor::Person, &RealGh, "demo#1")
+        } else {
+            ops::claim(
+                &mut store,
+                &Actor::Person,
+                &RealGh,
+                "demo#1",
+                Some("worker"),
+            )
+        }
+        .unwrap_err();
+        assert_eq!(error.code, "gh-failed");
+        assert_eq!(
+            ops::list(
+                &mut store,
+                &Actor::Person,
+                ops::List {
+                    all: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .data,
+            before
+        );
+    }
+    assert_eq!(
+        ops::sync(&mut store, &Actor::Person, &RealGh, None)
+            .unwrap()
+            .data[0]
+            .status,
+        "failed"
+    );
+    assert_eq!(
+        ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .data,
+        before
+    );
+}
+fn refresh_value() -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(include_str!("fixtures/github/open.json")).unwrap()[0]
+        .clone()
+}
+#[test]
+fn refresh_rejects_wrong_number_without_local_changes() {
+    isolated(|| {
+        let mut value = refresh_value();
+        value["number"] = 999.into();
+        reject_refresh(value);
+    });
+}
+#[test]
+fn refresh_rejects_wrong_kind_without_local_changes() {
+    isolated(|| {
+        let mut value = refresh_value();
+        value["kind"] = "pr".into();
+        reject_refresh(value);
+    });
+}
+#[test]
+fn refresh_rejects_unknown_or_impossible_state_without_local_changes() {
+    isolated(|| {
+        for state in ["BOGUS", "MERGED", "open"] {
+            let mut value = refresh_value();
+            value["state"] = state.into();
+            reject_refresh(value);
+        }
+    });
+}
+
+fn reject_cursors(mode: &str, message: &str) {
+    use punch_core::github::RealGh;
+    let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+    std::fs::write(state.join("cursor-mode"), mode).unwrap();
+    let error = RealGh.linked("owner/repo", 1).unwrap_err();
+    assert_eq!(error.code, "gh-failed");
+    assert!(error.message.contains(message), "{error:?}");
+}
+#[test]
+fn pagination_rejects_repeated_cursor() {
+    isolated(|| reject_cursors("repeat", "repeated pagination cursor"));
+}
+#[test]
+fn pagination_rejects_cyclic_cursor() {
+    isolated(|| reject_cursors("cycle", "repeated pagination cursor"));
+}
+#[test]
+fn pagination_caps_unique_pages() {
+    isolated(|| reject_cursors("unique", "pagination page limit"));
+}
+
+#[test]
+fn trait_refresh_validation_preserves_local_state() {
+    isolated(|| {
+        for invalid in ["number", "kind", "state"] {
+            let (_dir, mut store) = setup();
+            let gh =
+                Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+            ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            let before = ops::show(&mut store, &Actor::Person, "demo#1")
+                .unwrap()
+                .data;
+            let mut item = gh.items.borrow()[0].clone();
+            match invalid {
+                "number" => item.number = 999,
+                "kind" => item.kind = Kind::Pr,
+                _ => item.state = "BOGUS".into(),
+            }
+            *gh.response.borrow_mut() = Some(item);
+            for unclaim in [false, true] {
+                let error = if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &gh, "demo#1")
+                } else {
+                    ops::claim(&mut store, &Actor::Person, &gh, "demo#1", Some("worker"))
+                }
+                .unwrap_err();
+                assert_eq!(error.code, "gh-failed");
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, "demo#1")
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+            let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+            assert_eq!(
+                ops::show(&mut store, &Actor::Person, "demo#1")
+                    .unwrap()
+                    .data,
+                before
+            );
+        }
+    });
+}
+
+#[test]
+fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use std::time::{Duration, Instant};
+        for unclaim in [false, true] {
+            let (dir, mut store) = setup();
+            let mut item: Item = serde_json::from_value(refresh_value()).unwrap();
+            item.number = 14895;
+            let gh = Fake::new(vec![item]);
+            ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+            if unclaim {
+                ops::claim(&mut store, &Actor::Person, &gh, "demo#14895", Some("old")).unwrap();
+            }
+            let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+            for name in ["release", "waiting"] {
+                let _ = std::fs::remove_file(state.join(name));
+            }
+            std::fs::write(state.join("slow"), "").unwrap();
+            let worker = std::thread::spawn(move || {
+                if unclaim {
+                    ops::unclaim(&mut store, &Actor::Person, &RealGh, "demo#14895")
+                } else {
+                    ops::claim(
+                        &mut store,
+                        &Actor::Person,
+                        &RealGh,
+                        "demo#14895",
+                        Some("new"),
+                    )
+                }
+            });
+            let start = Instant::now();
+            while !state.join("waiting").exists() {
+                assert!(start.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let mut second = Store::open_at(dir.path()).unwrap();
+            assert!(ops::list(&mut second, &Actor::Person, ops::List::default()).is_ok());
+            let start = Instant::now();
+            let note = ops::note(&mut second, &Actor::Person, "demo#14895", "concurrent edit");
+            let elapsed = start.elapsed();
+            std::fs::write(state.join("release"), "").unwrap();
+            let result = worker.join().unwrap().unwrap();
+            assert!(note.is_ok(), "{note:?}");
+            assert!(elapsed < Duration::from_secs(2));
+            assert!(result.data.notes.contains("concurrent edit"));
+            assert_eq!(result.data.revision, note.unwrap().data.revision + 1);
+            assert_eq!(
+                result.data.slot.as_deref(),
+                if unclaim { None } else { Some("new") }
+            );
+        }
     });
 }

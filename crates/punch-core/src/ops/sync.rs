@@ -4,10 +4,10 @@ use crate::{
     error::*,
     github::{Gh, Item},
     model::*,
-    store::{Repository, Store},
+    store::Store,
 };
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Serialize)]
 pub struct SyncResult {
@@ -23,7 +23,7 @@ pub fn sync(
     gh: &dyn Gh,
     project: Option<&str>,
 ) -> Result<Outcome<Vec<SyncResult>>, PunchError> {
-    let projects = store.transaction(|repo| {
+    let projects = store.read_transaction(|repo| {
         if let Some(p) = project {
             find_project(repo, p)?;
         }
@@ -37,7 +37,26 @@ pub fn sync(
     })?;
     let mut results = vec![];
     for p in projects {
-        let result = store.transaction(|repo| sync_project(repo, gh, &p));
+        let result = (|| {
+            let existing = store.read_transaction(|repo| repo.github_identities(p.id))?;
+            let fetched = fetch_project(gh, &p, &existing)?;
+            store.transaction(|repo| {
+                let timestamp = now()?;
+                let mut changed = false;
+                let mut position = repo.next_position(p.id)?;
+                for (item, linked) in &fetched {
+                    changed |= repo.upsert_github(
+                        &p,
+                        item,
+                        &item.cache(linked.as_ref(), &timestamp),
+                        &timestamp,
+                        position,
+                    )?;
+                    position += 1.0;
+                }
+                Ok((changed, fetched.len()))
+            })
+        })();
         results.push(match result {
             Ok((changed, cards)) => SyncResult {
                 project: p.slug,
@@ -57,42 +76,51 @@ pub fn sync(
     }
     Ok(Outcome::new(results.iter().any(|r| r.changed), results))
 }
-fn sync_project(
-    repo: &Repository<'_>,
+fn fetch_project(
     gh: &dyn Gh,
     p: &Project,
-) -> Result<(bool, usize), PunchError> {
+    existing: &[(Kind, i64)],
+) -> Result<Vec<(Item, Option<Item>)>, PunchError> {
     let github = p
         .github_repo
         .as_deref()
         .ok_or_else(|| PunchError::storage("missing GitHub repo"))?;
-    let existing: Vec<_> = repo
-        .tasks()?
-        .into_iter()
-        .filter(|t| t.project_id == p.id && t.kind != Kind::Local)
+    let mut items = vec![];
+    let mut indices = BTreeMap::new();
+    for item in gh.list(github, p.sync_scope)? {
+        item.validate(item.kind, None)?;
+        let key = (item.kind.to_string(), item.number);
+        if let Some(&index) = indices.get(&key) {
+            items[index] = item;
+        } else {
+            indices.insert(key, items.len());
+            items.push(item);
+        }
+    }
+    let stored: BTreeSet<_> = existing
+        .iter()
+        .map(|(kind, n)| (kind.to_string(), *n))
         .collect();
-    let mut items = gh.list(github, p.sync_scope)?;
-    for task in &existing {
-        let number = task
-            .gh_number
-            .ok_or_else(|| PunchError::storage("missing GitHub number"))?;
+    for &(kind, number) in existing {
         // Refresh stored numbers even when outside the open/scope query.
-        let fresh = gh.get(github, task.kind, number)?;
-        items.retain(|i| i.kind != task.kind || i.number != number);
-        items.push(fresh);
+        let fresh = gh.get(github, kind, number)?;
+        fresh.validate(kind, Some(number))?;
+        let key = (kind.to_string(), number);
+        if let Some(&index) = indices.get(&key) {
+            items[index] = fresh;
+        } else {
+            indices.insert(key, items.len());
+            items.push(fresh);
+        }
     }
     let issues: BTreeSet<_> = items
         .iter()
         .filter(|i| i.kind == Kind::Issue)
         .map(|i| i.number)
         .collect();
-    let mut changed = false;
-    let mut count = 0;
-    let timestamp = now()?;
+    let mut fetched = vec![];
     for item in &items {
-        let stored = existing
-            .iter()
-            .any(|t| t.kind == item.kind && t.gh_number == Some(item.number));
+        let stored = stored.contains(&(item.kind.to_string(), item.number));
         // Retain a previously imported PR's identity and local metadata; only suppress new cards.
         if item.kind == Kind::Pr && !stored && item.closes.iter().any(|n| issues.contains(n)) {
             continue;
@@ -102,19 +130,17 @@ fn sync_project(
         } else {
             None
         };
-        changed |= repo.upsert_github(
-            p,
-            item,
-            &item.cache(linked.as_ref(), &timestamp),
-            &timestamp,
-        )?;
-        count += 1;
+        fetched.push((item.clone(), linked));
     }
-    Ok((changed, count))
+    Ok(fetched)
 }
+
 pub(super) fn linked_pr(gh: &dyn Gh, repo: &str, issue: i64) -> Result<Option<Item>, PunchError> {
-    Ok(gh
-        .linked(repo, issue)?
+    let linked = gh.linked(repo, issue)?;
+    for item in &linked {
+        item.validate(Kind::Pr, None)?;
+    }
+    Ok(linked
         .into_iter()
         .filter(|p| {
             p.kind == Kind::Pr

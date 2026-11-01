@@ -73,7 +73,7 @@ pub fn project_list(
     store: &mut Store,
     _actor: &Actor,
 ) -> Result<Outcome<Vec<Project>>, PunchError> {
-    store.transaction(|repo| Ok(Outcome::new(false, repo.projects()?)))
+    store.read_transaction(|repo| Ok(Outcome::new(false, repo.projects()?)))
 }
 pub fn project_archive(
     store: &mut Store,
