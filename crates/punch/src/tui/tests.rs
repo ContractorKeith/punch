@@ -552,3 +552,28 @@ fn add_project_selection_stays_visible_at_the_modal_height() {
         assert!(matches!(board.mode, Mode::Add { ref project, .. } if project == "p10"));
     });
 }
+
+#[test]
+fn panic_hook_restores_terminal_before_the_previous_hook() {
+    isolated(|_| {
+        use std::sync::{Arc, Mutex};
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let previous = std::panic::take_hook();
+        let observed = events.clone();
+        std::panic::set_hook(Box::new(move |_| observed.lock().unwrap().push("previous")));
+        let observed = events.clone();
+        let bytes = output.clone();
+        super::terminal::install_panic_hook(move || {
+            super::terminal::restore_with(&mut *bytes.lock().unwrap(), || {
+                observed.lock().unwrap().push("raw disabled");
+                // Even a raw-mode failure must not skip cursor/screen cleanup.
+                Err(std::io::Error::other("fake terminal"))
+            });
+        });
+        assert!(std::panic::catch_unwind(|| panic!("exercise board panic hook")).is_err());
+        std::panic::set_hook(previous);
+        assert_eq!(*events.lock().unwrap(), ["raw disabled", "previous"]);
+        assert_eq!(*output.lock().unwrap(), b"\x1b[?25h\x1b[?1049l");
+    });
+}

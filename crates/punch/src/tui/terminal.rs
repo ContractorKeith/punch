@@ -11,8 +11,11 @@ use std::io::{self, IsTerminal, Stdout};
 
 pub type Screen = Terminal<CrosstermBackend<Stdout>>;
 pub fn restore() {
-    let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), Show, LeaveAlternateScreen);
+    restore_with(&mut io::stdout(), disable_raw_mode);
+}
+pub(super) fn restore_with(writer: &mut impl io::Write, disable: impl FnOnce() -> io::Result<()>) {
+    let _ = disable();
+    let _ = execute!(writer, Show, LeaveAlternateScreen);
 }
 pub struct Session;
 impl Session {
@@ -22,11 +25,7 @@ impl Session {
                 "the board requires a terminal; use list --json for agents",
             ));
         }
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            restore();
-            previous(info);
-        }));
+        install_panic_hook(restore);
         // Construct the guard before the first terminal mutation, including partial setup failures.
         let session = Self;
         enable_raw_mode()?;
@@ -50,4 +49,13 @@ impl Drop for Session {
     fn drop(&mut self) {
         restore();
     }
+}
+
+// The restoration boundary is injectable so panic cleanup needs no real terminal in tests.
+pub(super) fn install_panic_hook(restore: impl Fn() + Send + Sync + 'static) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore();
+        previous(info);
+    }));
 }
