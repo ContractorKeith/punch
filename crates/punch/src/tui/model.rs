@@ -1,5 +1,5 @@
 //! Terminal-independent board state and key updates.
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use punch_core::{error::PunchError, model::*, ops, store::Store};
 pub const COLUMNS: [Column; 6] = [
     Column::Todo,
@@ -213,7 +213,24 @@ impl Board {
             Err(e) => self.flash(e),
         }
     }
-    pub fn key(&mut self, key: KeyCode, store: &mut Store) {
+    pub fn key(&mut self, event: KeyEvent, store: &mut Store) {
+        if event.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(event.code, KeyCode::Char('c' | 'C'))
+        {
+            self.quit = true;
+            return;
+        }
+        // Shift supplies uppercase commands and text; other chords are not plain input.
+        if event.modifiers.intersects(
+            KeyModifiers::CONTROL
+                | KeyModifiers::ALT
+                | KeyModifiers::SUPER
+                | KeyModifiers::HYPER
+                | KeyModifiers::META,
+        ) {
+            return;
+        }
+        let key = event.code;
         match self.mode.clone() {
             Mode::Archive(task) => {
                 match key {

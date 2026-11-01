@@ -68,20 +68,20 @@ fn focus_moves_between_columns_and_cards_and_stops_at_edges() {
     isolated(|_| {
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Char('j'), &mut store);
+        board.key(Char('j').into(), &mut store);
         assert_eq!(board.row, 1);
-        board.key(Char('k'), &mut store);
+        board.key(Char('k').into(), &mut store);
         assert_eq!(board.row, 0);
-        board.key(Char('k'), &mut store);
+        board.key(Char('k').into(), &mut store);
         assert_eq!(board.row, 0);
-        board.key(Char('l'), &mut store);
+        board.key(Char('l').into(), &mut store);
         assert_eq!(board.column, 1);
-        board.key(Char('h'), &mut store);
+        board.key(Char('h').into(), &mut store);
         assert_eq!(board.column, 0);
-        board.key(Char('h'), &mut store);
+        board.key(Char('h').into(), &mut store);
         assert_eq!(board.column, 0);
         for _ in 0..10 {
-            board.key(Char('l'), &mut store);
+            board.key(Char('l').into(), &mut store);
         }
         assert_eq!(board.column, 5);
     });
@@ -102,25 +102,25 @@ fn project_picker_includes_all_and_text_filter_searches_notes() {
         )
         .unwrap();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Char('p'), &mut store);
-        board.key(Char('j'), &mut store);
-        board.key(Enter, &mut store);
+        board.key(Char('p').into(), &mut store);
+        board.key(Char('j').into(), &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(board.project.as_deref(), Some("alpha"));
         assert_eq!(board.cards(0).len(), 2);
-        board.key(Char('/'), &mut store);
+        board.key(Char('/').into(), &mut store);
         for c in "screenshots".chars() {
-            board.key(Char(c), &mut store);
+            board.key(Char(c).into(), &mut store);
         }
-        board.key(Enter, &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(board.cards(0).iter().map(|t| t.id).collect::<Vec<_>>(), [2]);
-        board.key(Char('/'), &mut store);
+        board.key(Char('/').into(), &mut store);
         for _ in 0..11 {
-            board.key(Backspace, &mut store);
+            board.key(Backspace.into(), &mut store);
         }
-        board.key(Enter, &mut store);
-        board.key(Char('p'), &mut store);
-        board.key(Char('k'), &mut store);
-        board.key(Enter, &mut store);
+        board.key(Enter.into(), &mut store);
+        board.key(Char('p').into(), &mut store);
+        board.key(Char('k').into(), &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(board.project, None);
         assert_eq!(board.cards(0).len(), 3);
     });
@@ -131,7 +131,7 @@ fn external_commit_bumps_data_version_and_poll_reloads_without_losing_focus() {
     isolated(|_| {
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Char('j'), &mut store);
+        board.key(Char('j').into(), &mut store);
         let mut external = Store::open().unwrap();
         ops::edit(
             &mut external,
@@ -154,17 +154,17 @@ fn detail_help_and_quit_are_modal_and_escape_returns_to_board() {
     isolated(|_| {
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Enter, &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(board.mode, Mode::Detail);
-        board.key(Char('j'), &mut store);
+        board.key(Char('j').into(), &mut store);
         assert_eq!(board.row, 0);
-        board.key(Esc, &mut store);
-        board.key(Char('?'), &mut store);
+        board.key(Esc.into(), &mut store);
+        board.key(Char('?').into(), &mut store);
         assert_eq!(board.mode, Mode::Help);
-        board.key(Char('q'), &mut store);
+        board.key(Char('q').into(), &mut store);
         assert_eq!(board.mode, Mode::Board);
         assert!(!board.quit);
-        board.key(Char('q'), &mut store);
+        board.key(Char('q').into(), &mut store);
         assert!(board.quit);
     });
 }
@@ -247,7 +247,7 @@ fn move_keys_write_through_ops_and_keep_the_moved_card_focused() {
             (Char('H'), Column::Doing),
             (Backspace, Column::Todo),
         ] {
-            board.key(key, &mut store);
+            board.key(key.into(), &mut store);
             assert_eq!(board.selected().unwrap().id, 1);
             assert_eq!(board.selected().unwrap().column, column);
             assert_eq!(
@@ -258,7 +258,7 @@ fn move_keys_write_through_ops_and_keep_the_moved_card_focused() {
                 column
             );
         }
-        board.key(Backspace, &mut store);
+        board.key(Backspace.into(), &mut store);
         assert_eq!(board.selected().unwrap().revision, 5);
     });
 }
@@ -270,7 +270,7 @@ fn refused_moves_flash_and_leave_focus_and_store_unchanged() {
         let mut board = Board::load(&mut store, Actor::Agent("bot".into())).unwrap();
         board.column = 3;
         let before = board.selected().unwrap().clone();
-        board.key(Char('L'), &mut store);
+        board.key(Char('L').into(), &mut store);
         assert!(board.status_text().unwrap().contains("agent-cannot-finish"));
         assert_eq!(board.selected().unwrap(), &before);
         assert_eq!(
@@ -296,7 +296,7 @@ fn stale_write_flashes_reloads_and_does_not_apply_the_requested_change() {
             },
         )
         .unwrap();
-        board.key(Char('L'), &mut store);
+        board.key(Char('L').into(), &mut store);
         assert!(board.status_text().unwrap().contains("stale"));
         let task = board.selected().unwrap();
         assert_eq!(task.notes, "newer notes");
@@ -311,18 +311,18 @@ fn priority_cycles_and_archive_requires_confirmation_of_the_original_revision() 
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
         for expected in [3, 0, 1, 2] {
-            board.key(Char('P'), &mut store);
+            board.key(Char('P').into(), &mut store);
             assert_eq!(board.selected().unwrap().priority, Priority(expected));
         }
-        board.key(Char('x'), &mut store);
-        board.key(Char('n'), &mut store);
+        board.key(Char('x').into(), &mut store);
+        board.key(Char('n').into(), &mut store);
         assert!(
             !ops::show(&mut store, &Actor::Person, "t1")
                 .unwrap()
                 .data
                 .archived
         );
-        board.key(Char('x'), &mut store);
+        board.key(Char('x').into(), &mut store);
         let mut external = Store::open().unwrap();
         ops::edit(
             &mut external,
@@ -335,11 +335,11 @@ fn priority_cycles_and_archive_requires_confirmation_of_the_original_revision() 
         )
         .unwrap();
         board.poll(&mut store).unwrap();
-        board.key(Char('y'), &mut store);
+        board.key(Char('y').into(), &mut store);
         assert!(board.status_text().unwrap().contains("stale"));
         assert!(!board.selected().unwrap().archived);
-        board.key(Char('x'), &mut store);
-        board.key(Char('y'), &mut store);
+        board.key(Char('x').into(), &mut store);
+        board.key(Char('y').into(), &mut store);
         assert_eq!(board.cards(0).len(), 2);
         assert!(
             ops::show(&mut store, &Actor::Person, "t1")
@@ -354,13 +354,13 @@ fn add_chooses_a_project_from_all_and_uses_the_current_filter_when_selected() {
     isolated(|_| {
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Char('a'), &mut store);
-        board.key(Char('j'), &mut store);
-        board.key(Enter, &mut store);
+        board.key(Char('a').into(), &mut store);
+        board.key(Char('j').into(), &mut store);
+        board.key(Enter.into(), &mut store);
         for c in "New beta card".chars() {
-            board.key(Char(c), &mut store);
+            board.key(Char(c).into(), &mut store);
         }
-        board.key(Enter, &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(
             ops::show(&mut store, &Actor::Person, "t4")
                 .unwrap()
@@ -369,11 +369,11 @@ fn add_chooses_a_project_from_all_and_uses_the_current_filter_when_selected() {
             "beta"
         );
         board.project = Some("alpha".into());
-        board.key(Char('a'), &mut store);
+        board.key(Char('a').into(), &mut store);
         for c in "New alpha card".chars() {
-            board.key(Char(c), &mut store);
+            board.key(Char(c).into(), &mut store);
         }
-        board.key(Enter, &mut store);
+        board.key(Enter.into(), &mut store);
         assert_eq!(board.selected().unwrap().title, "New alpha card");
         assert_eq!(board.selected().unwrap().project, "alpha");
     });
@@ -383,7 +383,7 @@ fn editor_save_uses_original_snapshot_and_agents_cannot_replace_notes() {
     isolated(|_| {
         let mut store = seed();
         let mut board = Board::load(&mut store, Actor::Person).unwrap();
-        board.key(Char('e'), &mut store);
+        board.key(Char('e').into(), &mut store);
         let snapshot = board.edit_request.take().unwrap();
         let mut external = Store::open().unwrap();
         ops::note(&mut external, &Actor::Person, "t1", "concurrent note").unwrap();
@@ -441,11 +441,11 @@ fn empty_and_tiny_boards_render_and_card_actions_are_noops() {
             Char('e'),
             Enter,
         ] {
-            board.key(key, &mut store);
+            board.key(key.into(), &mut store);
         }
         assert_eq!(board.mode, Mode::Board);
         assert!(board.edit_request.is_none());
-        board.key(Char('a'), &mut store);
+        board.key(Char('a').into(), &mut store);
         assert!(board.status_text().unwrap().contains("add a project first"));
         for (w, h) in [(1, 1), (19, 4), (20, 8), (39, 10), (144, 30)] {
             let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
@@ -453,5 +453,63 @@ fn empty_and_tiny_boards_render_and_card_actions_are_noops() {
                 .draw(|frame| super::view::draw(frame, &board))
                 .unwrap();
         }
+    });
+}
+
+#[test]
+fn ctrl_c_quits_every_mode_and_modifier_chords_do_not_type() {
+    isolated(|_| {
+        use crossterm::event::{KeyEvent, KeyModifiers as M};
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        let modes = [
+            Mode::Board,
+            Mode::AddProject(0),
+            Mode::Projects(0),
+            Mode::Add {
+                project: "alpha".into(),
+                title: "keep".into(),
+            },
+            Mode::Filter("keep".into()),
+            Mode::Detail,
+            Mode::Help,
+            Mode::Archive(Box::new(board.selected().unwrap().clone())),
+        ];
+        for mode in modes {
+            board.mode = mode;
+            board.quit = false;
+            board.key(KeyEvent::new(Char('c'), M::CONTROL), &mut store);
+            assert!(board.quit, "Ctrl-C did not quit {:?}", board.mode);
+        }
+        board.quit = false;
+        for mode in [
+            Mode::Add {
+                project: "alpha".into(),
+                title: "keep".into(),
+            },
+            Mode::Filter("keep".into()),
+        ] {
+            board.mode = mode.clone();
+            for modifiers in [
+                M::CONTROL,
+                M::ALT,
+                M::SUPER,
+                M::HYPER,
+                M::META,
+                M::CONTROL | M::SHIFT,
+            ] {
+                board.key(KeyEvent::new(Char('v'), modifiers), &mut store);
+                board.key(KeyEvent::new(Backspace, modifiers), &mut store);
+                assert_eq!(board.mode, mode);
+            }
+        }
+        board.mode = Mode::Filter(String::new());
+        board.key(KeyEvent::new(Char('A'), M::SHIFT), &mut store);
+        assert_eq!(board.mode, Mode::Filter("A".into()));
+        board.mode = Mode::Board;
+        board.key(KeyEvent::new(Char('q'), M::ALT), &mut store);
+        assert!(!board.quit);
+        board.key(KeyEvent::new(Char('L'), M::SHIFT), &mut store);
+        assert_eq!(board.selected().unwrap().column, Column::Doing);
     });
 }

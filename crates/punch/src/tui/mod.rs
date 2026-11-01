@@ -21,7 +21,7 @@ pub fn run(actor: Actor) -> Result<(), PunchError> {
             && let Event::Key(key) = event::read()?
             && key.kind != KeyEventKind::Release
         {
-            board.key(key.code, &mut store);
+            board.key(key, &mut store);
             if let Some(snapshot) = board.edit_request.take() {
                 match session.edit(&mut terminal, &snapshot.notes) {
                     Ok(notes) => board.save_notes(&mut store, &snapshot, notes),
