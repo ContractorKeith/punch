@@ -30,13 +30,28 @@ pub(crate) fn diagnostic(input: &str) -> String {
                 "bearer",
             ] {
                 if let Some(rest) = tail.strip_prefix(key) {
+                    let quoted = at > 0 && matches!(input.as_bytes()[at - 1], b'"' | b'\'');
+                    let rest = if quoted {
+                        let quote = input.as_bytes()[at - 1] as char;
+                        let Some(rest) = rest.strip_prefix(quote) else {
+                            continue;
+                        };
+                        rest
+                    } else {
+                        rest
+                    };
                     let spaces = rest.len() - rest.trim_start_matches([' ', '\t']).len();
                     let separator = rest.as_bytes().get(spaces);
                     if (key == "bearer" && spaces > 0)
                         || (key != "bearer" && matches!(separator, Some(b':' | b'=')))
                     {
-                        matched =
-                            Some((key, at + key.len() + spaces + usize::from(key != "bearer")));
+                        matched = Some((
+                            key,
+                            at + key.len()
+                                + usize::from(quoted)
+                                + spaces
+                                + usize::from(key != "bearer"),
+                        ));
                         break;
                     }
                 }

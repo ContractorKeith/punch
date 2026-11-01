@@ -168,7 +168,11 @@ fn isolated(f: impl FnOnce()) {
 printf '%s\n' "$@" >> "$PUNCH_STATE_DIR/calls"
 printf 'END\n' >> "$PUNCH_STATE_DIR/calls"
 if [ -f "$PUNCH_STATE_DIR/diagnostic" ]; then
-    cat "$PUNCH_STATE_DIR/diagnostic" >&2
+    if [ -f "$PUNCH_STATE_DIR/stdout-diagnostic" ]; then
+        cat "$PUNCH_STATE_DIR/diagnostic"
+    else
+        cat "$PUNCH_STATE_DIR/diagnostic" >&2
+    fi
     exit 42
 fi
 if [ -f "$PUNCH_STATE_DIR/fail" ]; then
@@ -679,25 +683,34 @@ fn credentials_are_redacted_before_warnings_and_storage() {
         let (store, _) = setup();
         let mut store = store.with_basecamp(Rc::new(punch_core::basecamp::RealBasecamp));
         let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
-        for diagnostic in [
-            "Authorization: Bearer SECRET_A\nnext line",
-            "authorization: Basic SECRET_B\nnext line",
-            "request failed: Bearer SECRET_C",
-            "token=SECRET_D&access_token=SECRET_E api_key=SECRET_F",
-            "TOKEN = \"SECRET_G with spaces\"; Api-Key: SECRET_H",
-        ] {
-            std::fs::write(root.join("diagnostic"), diagnostic).unwrap();
-            let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
-            // Seed a local task on the first iteration, then retry its dirty mirror.
-            if out.warnings.is_empty() {
-                add(&mut store);
+        for stdout in [false, true] {
+            if stdout {
+                std::fs::write(root.join("stdout-diagnostic"), "").unwrap();
             }
-            let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
-            let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
-            let error = task.basecamp_card.unwrap().last_error.unwrap();
-            assert!(!error.contains("SECRET_"), "{error}");
-            assert!(!out.warnings.join(" ").contains("SECRET_"));
-            assert!(error.contains("[REDACTED]"));
+            for diagnostic in [
+                r#""access_token":"SECRET_JSON_A""#,
+                r#""token": "SECRET_JSON_B""#,
+                "access_token=SECRET_PLAIN",
+                "api_key: SECRET_KEY",
+                "Authorization: Bearer SECRET_A\nnext line",
+                "authorization: Basic SECRET_B\nnext line",
+                "request failed: Bearer SECRET_C",
+                "token=SECRET_D&access_token=SECRET_E api_key=SECRET_F",
+                "TOKEN = \"SECRET_G with spaces\"; Api-Key: SECRET_H",
+            ] {
+                std::fs::write(root.join("diagnostic"), diagnostic).unwrap();
+                let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+                // Seed a local task on the first iteration, then retry its dirty mirror.
+                if out.warnings.is_empty() {
+                    add(&mut store);
+                }
+                let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+                let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+                let error = task.basecamp_card.unwrap().last_error.unwrap();
+                assert!(!error.contains("SECRET_"), "{error}");
+                assert!(!out.warnings.join(" ").contains("SECRET_"));
+                assert!(error.contains("[REDACTED]"));
+            }
         }
     });
 }
