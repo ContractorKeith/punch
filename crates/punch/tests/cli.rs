@@ -620,3 +620,52 @@ fn board_json_refuses_before_opening_any_store() {
     }
     assert!(!fresh.exists(), "board --json created the state directory");
 }
+
+#[test]
+fn revision_overflow_refuses_every_task_change_without_writing() {
+    for args in [
+        vec!["note", "t1", "overflow"],
+        vec!["edit", "t1", "--title", "changed", "--after", "t2"],
+        vec!["move", "t1", "doing"],
+        vec!["archive", "t1"],
+        vec!["unarchive", "t1"],
+    ] {
+        let dir = setup();
+        json(&dir, &["add", "original", "-p", "demo"]);
+        json(&dir, &["add", "dependency", "-p", "demo"]);
+        if args[0] == "unarchive" {
+            json(&dir, &["archive", "t1"]);
+        }
+        let db = rusqlite::Connection::open(dir.path().join("punch.db")).unwrap();
+        db.execute("UPDATE tasks SET revision = ?1 WHERE id = 1", [i64::MAX])
+            .unwrap();
+        let before = json(&dir, &["show", "t1"])["data"].clone();
+        let mut command = vec!["--json"];
+        command.extend_from_slice(&args);
+        let output = run(&dir, &command).code(3).get_output().clone();
+        assert!(output.stderr.is_empty(), "{args:?}");
+        let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope.as_object().unwrap().len(), 2);
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["refusals"][0]["code"], "storage-failed");
+        assert_eq!(json(&dir, &["show", "t1"])["data"], before, "{args:?}");
+    }
+}
+
+#[test]
+fn notes_advance_returned_and_persisted_revision_on_every_append() {
+    let dir = setup();
+    json(&dir, &["add", "original", "-p", "demo"]);
+    assert_eq!(json(&dir, &["show", "t1"])["data"]["revision"], 1);
+    for (actor, revision) in [("person", 2), ("bot", 3)] {
+        let args = if actor == "bot" {
+            vec!["--as", "bot", "note", "t1", "same text"]
+        } else {
+            vec!["note", "t1", "same text"]
+        };
+        let result = json(&dir, &args);
+        assert_eq!(result["changed"], true);
+        assert_eq!(result["data"]["revision"], revision);
+        assert_eq!(json(&dir, &["show", "t1"])["data"], result["data"]);
+    }
+}
