@@ -54,6 +54,10 @@ struct Fake {
     fail_title: RefCell<bool>,
 }
 impl Basecamp for Fake {
+    fn trash_card(&self, _: &BasecampLink, id: &str) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("trash {id}"));
+        Ok(())
+    }
     fn find_card(&self, _: &BasecampLink, _: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
@@ -184,6 +188,7 @@ if [ -f "$PUNCH_STATE_DIR/bad-json" ]; then
     exit 0
 fi
 if [ -f "$PUNCH_STATE_DIR/hang" ]; then
+    echo 'timeout diagnostic: "access_token":"SECRET_TIMEOUT"' >&2
     echo $$ > "$PUNCH_STATE_DIR/waiting"
     sleep 32
     echo '{"ok":true,"data":{"id":99}}'
@@ -206,6 +211,7 @@ list)
     fi ;;
 
 create|update) echo '{"ok":true,"data":{"id":99,"title":"fixture"}}' ;;
+trash) echo '{"ok":true,"data":{"id":99,"status":"trashed"}}' ;;
 move) echo '{"ok":true,"data":{"id":"99","status":"moved","column":"40"}}' ;;
 *) exit 99 ;;
 esac
@@ -665,7 +671,10 @@ fn hung_basecamp_commits_locally_keeps_store_available_and_times_out() {
         let task = worker.join().unwrap();
         let card = task.basecamp_card.unwrap();
         assert!(card.dirty);
-        assert!(card.last_error.unwrap().contains("timeout"));
+        let error = card.last_error.unwrap();
+        assert!(error.contains("timeout diagnostic"), "{error}");
+        assert!(!error.contains("SECRET_TIMEOUT"), "{error}");
+        assert!(error.contains("[REDACTED]"), "{error}");
         let pid = std::fs::read_to_string(root.join("waiting")).unwrap();
         assert!(
             !std::process::Command::new("kill")
@@ -754,6 +763,24 @@ fn pending_create_survives_crash_and_adopts_exact_title_on_retry() {
         let pending = task.basecamp_card.unwrap();
         assert!(pending.dirty);
         assert!(pending.card_id.is_empty());
+        // A fresh crashed lease is skipped; fixture time then advances beyond its five-minute TTL.
+        ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+        assert!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .basecamp_card
+                .unwrap()
+                .card_id
+                .is_empty()
+        );
+        rusqlite::Connection::open(root.join("punch.db"))
+            .unwrap()
+            .execute(
+                "UPDATE basecamp_cards SET create_claim='2000-01-01T00:00:00Z' WHERE task_id=1",
+                [],
+            )
+            .unwrap();
         std::fs::remove_file(root.join("crash-create")).unwrap();
         ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
         let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
@@ -866,5 +893,106 @@ fn destination_change_clears_archived_associations_without_remote_calls() {
         assert!(task.basecamp_card.is_none());
         ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
         assert!(fake.calls.borrow().is_empty());
+    });
+}
+
+#[test]
+fn concurrent_mirrors_create_one_card() {
+    isolated(|| {
+        use std::sync::{Arc, Barrier, Condvar, Mutex};
+        #[derive(Default)]
+        struct Race {
+            counts: Mutex<(usize, usize)>,
+            wake: Condvar,
+        }
+        struct Racing(Arc<Race>);
+        impl Basecamp for Racing {
+            fn trash_card(&self, _: &BasecampLink, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn find_card(&self, _: &BasecampLink, _: &str) -> Result<Option<String>, String> {
+                Ok(None)
+            }
+            fn create(&self, _: &BasecampLink, _: &str, _: &str) -> Result<String, String> {
+                let mut counts = self.0.counts.lock().unwrap();
+                counts.0 += 1;
+                let id = counts.0.to_string();
+                self.0.wake.notify_all();
+                let (counts, timed) = self
+                    .0
+                    .wake
+                    .wait_timeout_while(counts, std::time::Duration::from_secs(3), |c| {
+                        c.0 < 2 && c.1 == 0
+                    })
+                    .unwrap();
+                assert!(
+                    !timed.timed_out(),
+                    "second mirror never arrived: {counts:?}"
+                );
+                Ok(id)
+            }
+            fn move_card(&self, _: &BasecampLink, _: &str, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn update_title(&self, _: &BasecampLink, _: &str, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let (mut store, fake) = setup();
+        *fake.fail.borrow_mut() = true;
+        add(&mut store);
+        drop(store);
+        let race = Arc::new(Race::default());
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = (0..2)
+            .map(|_| {
+                let race = race.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut store = Store::open()
+                        .unwrap()
+                        .with_basecamp(Rc::new(Racing(race.clone())));
+                    barrier.wait();
+                    ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+                    race.counts.lock().unwrap().1 += 1;
+                    race.wake.notify_all();
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(race.counts.lock().unwrap().0, 1, "duplicate remote cards");
+        let mut store = Store::open().unwrap();
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .basecamp_card
+                .unwrap()
+                .card_id,
+            "1"
+        );
+    });
+}
+
+#[test]
+fn trash_duplicate_uses_scoped_cli_command() {
+    isolated(|| {
+        let (mut store, _) = setup();
+        let link = ops::bc_status(&mut store, &Actor::Person, None)
+            .unwrap()
+            .data
+            .remove(0)
+            .link;
+        punch_core::basecamp::RealBasecamp
+            .trash_card(&link, "101")
+            .unwrap();
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        assert!(
+            std::fs::read_to_string(root.join("calls"))
+                .unwrap()
+                .contains("cards\ntrash\n101\n--project\n10\n--card-table\n20\n--json\nEND")
+        );
     });
 }

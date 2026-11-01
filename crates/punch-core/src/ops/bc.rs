@@ -165,12 +165,16 @@ fn mirror(
         } else {
             format!("{reference} · {}", task.title)
         };
-        // Empty card_id records a failed creation using the existing NOT NULL schema.
-        let mut card = task.basecamp_card.clone().unwrap_or(BasecampCard {
-            card_id: String::new(),
-            dirty: false,
-            last_error: None,
-        });
+        let claim = time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).map_err(PunchError::storage)?;
+        let Some((mut card, claimed)) = store.transaction(|repo| {
+            if !repo.basecamp_links()?.contains(link) { return Ok(None); }
+            let Some(current) = repo.tasks()?.into_iter().find(|t| t.id == task.id) else { return Ok(None); };
+            let card = current.basecamp_card.unwrap_or(BasecampCard { card_id: String::new(), dirty: true, last_error: None });
+            let claimed = card.card_id.is_empty();
+            if claimed && !repo.claim_basecamp_create(task.id, &claim)? { return Ok(None); }
+            Ok(Some((card, claimed)))
+        })? else { continue; };
+        let mut created = false;
         let result = if card.card_id.is_empty() {
             bc.find_card(link, &title).and_then(|existing| {
                 if let Some(id) = existing {
@@ -180,7 +184,7 @@ fn mirror(
                 } else {
                     bc.create(link, column, &title).and_then(|id| {
                         if id.is_empty() { Err("Basecamp returned an empty card ID".into()) }
-                        else { card.card_id = id; Ok(()) }
+                        else { card.card_id = id; created = true; Ok(()) }
                     })
                 }
             })
@@ -200,15 +204,28 @@ fn mirror(
                 card.last_error = Some(error);
             }
         }
-        changed |= store.transaction(|repo| {
-            // A concurrent relink must never receive an old table's card ID.
-            if !repo.basecamp_links()?.contains(link) { return Ok(false); }
-            let mut card = card.clone();
-            if repo.tasks()?.into_iter().find(|t| t.id == task.id).is_some_and(|current| current.revision != task.revision) {
-                card.dirty = true;
+        let (saved, discard) = store.transaction(|repo| {
+            // Never attach an old destination or overwrite another creator's association.
+            let current = repo.tasks()?.into_iter().find(|t| t.id == task.id);
+            let conflict = !repo.basecamp_links()?.contains(link)
+                || current.as_ref().and_then(|t| t.basecamp_card.as_ref()).is_some_and(|c| !c.card_id.is_empty() && c.card_id != card.card_id)
+                || (claimed && !repo.owns_basecamp_create(task.id, &claim)?);
+            if conflict {
+                let stored_same = repo.basecamp_links()?.contains(link)
+                    && current.as_ref().and_then(|t| t.basecamp_card.as_ref())
+                        .is_some_and(|c| c.card_id == card.card_id);
+                return Ok((false, created && !stored_same));
             }
-            repo.save_basecamp_card(task.id, &card)
+            let mut card = card.clone();
+            if current.is_some_and(|t| t.revision != task.revision) { card.dirty = true; }
+            let saved = repo.save_basecamp_card(task.id, &card)?;
+            if claimed { repo.release_basecamp_create(task.id, &claim)?; }
+            Ok((saved, false))
         })?;
+        changed |= saved;
+        if discard && let Err(error) = bc.trash_card(link, &card.card_id) {
+                warnings.push(crate::basecamp::diagnostic(&format!("{BASECAMP_FAILED}: {}: cannot trash duplicate card: {error}", task.reference())));
+        }
     }
     Ok((changed, warnings))
 }

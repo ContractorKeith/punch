@@ -102,9 +102,14 @@ The local task and dirty mirror intent commit before any Basecamp call; no
 transaction stays open while the CLI runs. Each call has a 30-second timeout.
 Failures produce `basecamp-failed` warnings while the task operation succeeds.
 Credentials in diagnostics are redacted before warnings or storage, and each
-diagnostic is limited to 2 KiB.
+diagnostic is limited to 2 KiB. Each captured stream is capped at 1 MiB; excess
+output is drained and reported as truncated. A timeout kills the process group
+and includes stderr received before the deadline.
 Status shows mapped columns, dirty cards, and their last errors. Failed creates
-have an empty card ID until retried. Before creating, punch lists the complete
+have an empty card ID until retried. A store claim serializes creation across
+processes; after a crash, sync can retry once the five-minute claim expires.
+A late creator preserves a newer stored card ID and trashes its duplicate.
+Before creating, punch lists the complete
 card table and adopts an exact-title match, recovering a remote create that
 succeeded before punch crashed. Sync reconciles all non-archived tasks in
 linked, active projects after the GitHub pull, including local-only projects;

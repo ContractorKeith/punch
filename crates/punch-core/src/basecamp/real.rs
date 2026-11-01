@@ -35,6 +35,19 @@ fn run_raw(args: &[&str]) -> Result<Value, String> {
 }
 
 impl Basecamp for RealBasecamp {
+    fn trash_card(&self, link: &BasecampLink, id: &str) -> Result<(), String> {
+        run(&[
+            "cards",
+            "trash",
+            id,
+            "--project",
+            &link.bucket_id,
+            "--card-table",
+            &link.card_table_id,
+            "--json",
+        ])?;
+        Ok(())
+    }
     fn find_card(&self, link: &BasecampLink, title: &str) -> Result<Option<String>, String> {
         let data = run(&[
             "cards",

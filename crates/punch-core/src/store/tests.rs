@@ -117,7 +117,7 @@ fn full_schema_pragmas_and_reopen_preserve_data() {
                 .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            1
+            MIGRATIONS.len() as i64
         );
     });
 }
@@ -125,7 +125,7 @@ fn full_schema_pragmas_and_reopen_preserve_data() {
 fn newer_store_refuses_without_modifying_database() {
     isolated(|path| {
         let db = Connection::open(path.join("punch.db")).unwrap();
-        db.execute_batch("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(2);").unwrap();
+        db.execute_batch("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(999);").unwrap();
         drop(db);
         let before = std::fs::read(path.join("punch.db")).unwrap();
         let err = Store::open().err().unwrap();
@@ -856,5 +856,111 @@ fn revision_guard_refuses_stale_moves_edits_archives_and_resets_after_failure() 
         assert_eq!(moved.data.revision, 3);
         // Existing CLI operations remain unconditional and the failed guard did not leak.
         ops::move_task(&mut store, &Actor::Person, "t1", Column::Review).unwrap();
+    });
+}
+
+#[test]
+fn expired_creator_keeps_newer_card_and_trashes_duplicate() {
+    isolated(|_| {
+        use crate::basecamp::Basecamp;
+        use std::{cell::RefCell, rc::Rc};
+        struct Creator {
+            slow: bool,
+            trashed: RefCell<Vec<String>>,
+        }
+        impl Basecamp for Creator {
+            fn find_card(&self, _: &BasecampLink, _: &str) -> Result<Option<String>, String> {
+                Ok(None)
+            }
+            fn create(&self, _: &BasecampLink, _: &str, _: &str) -> Result<String, String> {
+                if self.slow {
+                    let mut other = Store::open().unwrap().with_basecamp(Rc::new(Creator {
+                        slow: false,
+                        trashed: Default::default(),
+                    }));
+                    other
+                        .connection
+                        .execute(
+                            "UPDATE basecamp_cards SET create_claim='2000-01-01T00:00:00Z'",
+                            [],
+                        )
+                        .unwrap();
+                    ops::sync(&mut other, &Actor::Person, &crate::github::RealGh, None).unwrap();
+                    Ok("101".into())
+                } else {
+                    Ok("202".into())
+                }
+            }
+            fn move_card(&self, _: &BasecampLink, _: &str, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn update_title(&self, _: &BasecampLink, _: &str, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn trash_card(&self, _: &BasecampLink, id: &str) -> Result<(), String> {
+                self.trashed.borrow_mut().push(id.into());
+                Ok(())
+            }
+        }
+        let fake = Rc::new(Creator {
+            slow: true,
+            trashed: Default::default(),
+        });
+        let mut store = Store::open().unwrap().with_basecamp(fake.clone());
+        project(&mut store);
+        add(&mut store, "race");
+        ops::bc_link(
+            &mut store,
+            &Actor::Person,
+            ops::BcLink {
+                project: "demo".into(),
+                bucket_id: "10".into(),
+                card_table_id: "20".into(),
+                column_map: [("todo".into(), "30".into())].into(),
+            },
+        )
+        .unwrap();
+        ops::sync(&mut store, &Actor::Person, &crate::github::RealGh, None).unwrap();
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .basecamp_card
+                .unwrap()
+                .card_id,
+            "202"
+        );
+        assert_eq!(*fake.trashed.borrow(), ["101"]);
+    });
+}
+
+#[test]
+fn version_one_store_upgrades_with_existing_card_intact() {
+    isolated(|root| {
+        let db = Connection::open(root.join("punch.db")).unwrap();
+        db.execute_batch(include_str!("migrations/0001_init.sql"))
+            .unwrap();
+        db.execute_batch("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(1); INSERT INTO projects(id,slug,name,created_at,updated_at) VALUES(1,'demo','demo','2026-11-01T00:00:00Z','2026-11-01T00:00:00Z'); INSERT INTO tasks(id,project_id,kind,title,local_column,position,created_at,updated_at) VALUES(1,1,'local','existing','todo',1,'2026-11-01T00:00:00Z','2026-11-01T00:00:00Z'); INSERT INTO basecamp_cards(task_id,card_id) VALUES(1,'202');").unwrap();
+        drop(db);
+        let mut store = Store::open().unwrap();
+        assert_eq!(schema_version(&store.connection).unwrap(), 3);
+        assert_eq!(
+            ops::show(&mut store, &Actor::Person, "t1")
+                .unwrap()
+                .data
+                .basecamp_card
+                .unwrap()
+                .card_id,
+            "202"
+        );
+        let claim: Option<String> = store
+            .connection
+            .query_row(
+                "SELECT create_claim FROM basecamp_cards WHERE task_id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(claim.is_none());
     });
 }

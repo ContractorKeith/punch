@@ -311,3 +311,35 @@ impl Repository<'_> {
         Ok(())
     }
 }
+
+impl Repository<'_> {
+    pub(crate) fn claim_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<bool, PunchError> {
+        Ok(self.db.execute("UPDATE basecamp_cards SET create_claim=?2 WHERE task_id=?1 AND card_id='' AND (create_claim IS NULL OR julianday(create_claim) < julianday('now', '-5 minutes'))", params![task_id, claim])? != 0)
+    }
+    pub(crate) fn owns_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<bool, PunchError> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM basecamp_cards WHERE task_id=?1 AND create_claim=?2)",
+            params![task_id, claim],
+            |r| r.get(0),
+        )?)
+    }
+    pub(crate) fn release_basecamp_create(
+        &self,
+        task_id: i64,
+        claim: &str,
+    ) -> Result<(), PunchError> {
+        self.db.execute(
+            "UPDATE basecamp_cards SET create_claim=NULL WHERE task_id=?1 AND create_claim=?2",
+            params![task_id, claim],
+        )?;
+        Ok(())
+    }
+}

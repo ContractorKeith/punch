@@ -8,7 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_init.sql")];
+const SCHEMA_VERSION: i64 = 3;
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("migrations/0001_init.sql")),
+    (3, include_str!("migrations/0003_basecamp_create_claim.sql")),
+];
 
 pub struct Store {
     connection: Connection,
@@ -36,11 +40,11 @@ impl Store {
         connection.busy_timeout(Duration::from_millis(5000))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         // Check the version before changing journal mode on an unsupported store.
-        if schema_version(&connection)? != MIGRATIONS.len() as i64 {
+        if schema_version(&connection)? != SCHEMA_VERSION {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             // Another opener may have migrated while this connection waited.
             let version = schema_version(&tx)?;
-            if version > MIGRATIONS.len() as i64 {
+            if version > SCHEMA_VERSION {
                 return Err(PunchError {
                     exit_code: 3,
                     ..PunchError::refusal(
@@ -50,16 +54,13 @@ impl Store {
                     )
                 });
             }
-            if version < MIGRATIONS.len() as i64 {
+            if version < SCHEMA_VERSION {
                 tx.execute_batch(
                     "CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);",
                 )?;
-                for (index, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
+                for (number, sql) in MIGRATIONS.iter().filter(|(number, _)| *number > version) {
                     tx.execute_batch(sql)?;
-                    tx.execute(
-                        "INSERT INTO schema_version(version) VALUES(?1)",
-                        [(index + 1) as i64],
-                    )?;
+                    tx.execute("INSERT INTO schema_version(version) VALUES(?1)", [number])?;
                 }
             }
             tx.commit()?;
