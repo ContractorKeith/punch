@@ -902,12 +902,13 @@ fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
     }
     let cap = 4 * 1024 * 1024;
     let base = show_with_notes("")[1]["result"].to_string().len();
-    // Plain ASCII notes occur once in each envelope, so each byte adds two bytes.
-    let fitting_notes = (cap - base) / 2;
+    // Each ASCII note byte appears twice. Leave 256 bytes for varying RFC 3339
+    // fractional-second lengths between fixtures on either side of the cap.
+    let fitting_notes = (cap - base - 256) / 2;
     let fitting = show_with_notes(&"x".repeat(fitting_notes));
     let result = &fitting[1]["result"];
     assert_eq!(result["isError"], false);
-    assert!(matches!(result.to_string().len(), n if n == cap || n == cap - 1));
+    assert!((cap - 512..=cap).contains(&result.to_string().len()));
     assert_eq!(
         envelope(&fitting[1])["data"]["notes"]
             .as_str()
@@ -916,7 +917,7 @@ fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
         fitting_notes
     );
     // Escaping quotes adds bytes beyond the raw note length, too.
-    for notes in ["x".repeat(fitting_notes + 1), "\"".repeat(900_000)] {
+    for notes in ["x".repeat(fitting_notes + 256), "\"".repeat(900_000)] {
         let replies = show_with_notes(&notes);
         assert_eq!(replies[1]["result"]["isError"], true);
         let refusal = envelope(&replies[1]);
