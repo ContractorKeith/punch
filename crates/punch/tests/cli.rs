@@ -349,9 +349,9 @@ fn environment_actor_is_enforced_and_explicit_as_overrides_it() {
     );
 }
 #[test]
-fn bare_help_and_read_help_do_not_open_store() {
+fn json_help_and_read_help_do_not_open_store() {
     let dir = TempDir::new().unwrap();
-    run(&dir, &[]).success();
+    run(&dir, &["--json"]).success();
     for command in [
         vec!["list", "--help"],
         vec!["show", "--help"],
@@ -545,12 +545,80 @@ fn local_assignee_identity_and_archive_control_add_idempotence() {
 #[test]
 fn bare_and_explicit_help_use_punch_name() {
     let dir = TempDir::new().unwrap();
-    for args in [vec![], vec!["--json"], vec!["--help"]] {
+    for args in [vec!["--json"], vec!["--help"]] {
         let output = run(&dir, &args).success().get_output().stdout.clone();
         let help = String::from_utf8(output).unwrap();
         assert!(help.contains("Usage: punch [OPTIONS] [COMMAND]"), "{help}");
     }
     assert!(!dir.path().join("punch.db").exists());
+}
+
+#[test]
+fn board_json_stays_noninteractive_and_nonterminal_board_refuses_cleanly() {
+    let dir = TempDir::new().unwrap();
+    run(&dir, &["board", "--json"]).code(2);
+    run(&dir, &[])
+        .code(2)
+        .stderr("invalid-input: the board requires a terminal; use list --json for agents\n");
+    run(&dir, &["board"]).code(2);
+}
+
+#[test]
+fn board_documentation_describes_current_entrypoints_once() {
+    let readme = include_str!("../../../README.md");
+    let contract = include_str!("../../../docs/refusal-codes.md");
+    assert_eq!(
+        readme
+            .matches("Bare `punch` and `punch board` open")
+            .count(),
+        1
+    );
+    assert!(readme.contains("Ctrl-C"));
+    assert!(!readme.contains("Bare `punch` prints help"));
+    assert!(!readme.contains("synchronization, the board"));
+    assert!(!readme.contains("phase 2"));
+    assert_eq!(
+        contract
+            .matches("Without a subcommand, an interactive terminal opens the board.")
+            .count(),
+        1
+    );
+    assert!(!contract.contains("Without a subcommand, punch prints help"));
+    assert!(contract.contains("bare `punch --json`"));
+    assert!(contract.contains("`punch board --json` exits 2"));
+}
+
+#[test]
+fn board_json_refuses_before_opening_any_store() {
+    let dir = TempDir::new().unwrap();
+    let blocked = dir.path().join("file");
+    std::fs::write(&blocked, "not a directory").unwrap();
+    let fresh = dir.path().join("fresh");
+    let newer = dir.path().join("newer");
+    std::fs::create_dir(&newer).unwrap();
+    let db = rusqlite::Connection::open(newer.join("punch.db")).unwrap();
+    db.execute_batch(include_str!(
+        "../../punch-core/src/store/fixtures/newer.sql"
+    ))
+    .unwrap();
+    drop(db);
+    for path in [&blocked, &newer, &fresh] {
+        let out = std::process::Command::new(assert_cmd::cargo::cargo_bin!("punch"))
+            .env("PUNCH_STATE_DIR", path)
+            .env_remove("PUNCH_AGENT")
+            .args(["board", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        assert!(out.stderr.is_empty());
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["refusals"][0]["code"], "invalid-input");
+        assert_eq!(
+            value["refusals"][0]["message"],
+            "board is interactive; use list --json"
+        );
+    }
+    assert!(!fresh.exists(), "board --json created the state directory");
 }
 
 #[test]

@@ -18,3 +18,4 @@ operation!(note);
 operation!(archive);
 operation!(ready);
 operation!(plan);
+operation!(update);

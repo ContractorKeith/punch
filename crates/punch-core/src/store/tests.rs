@@ -758,3 +758,65 @@ fn opening_current_store_does_not_wait_for_write_lock() {
         tx.rollback().unwrap();
     });
 }
+
+#[test]
+fn data_version_changes_only_for_commits_from_another_connection() {
+    isolated(|_| {
+        let mut watcher = Store::open().unwrap();
+        let before = watcher.data_version().unwrap();
+        project(&mut watcher);
+        assert_eq!(watcher.data_version().unwrap(), before);
+        let mut writer = Store::open().unwrap();
+        add(&mut writer, "external");
+        assert_ne!(watcher.data_version().unwrap(), before);
+    });
+}
+
+#[test]
+fn revision_guard_refuses_stale_moves_edits_archives_and_resets_after_failure() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        let snapshot = add(&mut store, "original");
+        let mut external = Store::open().unwrap();
+        ops::edit(
+            &mut external,
+            &Actor::Person,
+            "t1",
+            ops::Edit {
+                notes: Some("external".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for update in [
+            ops::Update::Move(Column::Doing),
+            ops::Update::Edit(ops::Edit {
+                priority: Some(Priority(0)),
+                ..Default::default()
+            }),
+            ops::Update::Archive,
+        ] {
+            let error =
+                ops::update_task(&mut store, &Actor::Person, &snapshot, update).unwrap_err();
+            assert_eq!(error.code, STALE);
+        }
+        let current = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+        assert_eq!(current.column, Column::Todo);
+        assert_eq!(current.priority, Priority(2));
+        assert!(!current.archived);
+        assert_eq!(current.notes, "external");
+        assert_eq!(current.revision, 2);
+        let moved = ops::update_task(
+            &mut store,
+            &Actor::Person,
+            &current,
+            ops::Update::Move(Column::Doing),
+        )
+        .unwrap();
+        assert!(moved.changed);
+        assert_eq!(moved.data.revision, 3);
+        // Existing CLI operations remain unconditional and the failed guard did not leak.
+        ops::move_task(&mut store, &Actor::Person, "t1", Column::Review).unwrap();
+    });
+}

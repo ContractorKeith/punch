@@ -18,6 +18,8 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    #[command(about = "Open the interactive board")]
+    Board,
     #[command(about = "List ready tasks; agents should pass --json")]
     Ready {
         #[arg(short = 'p', long)]
@@ -155,12 +157,16 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         .slot
         .as_ref()
         .map_or(Actor::Person, |s| Actor::Agent(s.clone()));
+    if matches!(cli.command, Some(Command::Board)) {
+        return Err(PunchError::usage("board is interactive; use list --json"));
+    }
     let mut store = Store::open()?;
     match cli
         .command
         .as_ref()
         .ok_or_else(|| PunchError::usage("missing command"))?
     {
+        Command::Board => Err(PunchError::usage("board is interactive; use list --json")),
         Command::Move { reference, column } => {
             present(ops::move_task(&mut store, &actor, reference, *column)?)
         }
