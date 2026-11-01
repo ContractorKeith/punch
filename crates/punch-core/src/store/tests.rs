@@ -758,3 +758,41 @@ fn opening_current_store_does_not_wait_for_write_lock() {
         tx.rollback().unwrap();
     });
 }
+
+#[test]
+fn github_upsert_does_not_load_unrelated_tasks() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "unrelated");
+        store
+            .connection
+            .execute("UPDATE tasks SET notes=x'80' WHERE id=1", [])
+            .unwrap();
+        let items: Vec<crate::github::Item> =
+            serde_json::from_str(include_str!("../../tests/fixtures/github/open.json")).unwrap();
+        for title in ["insert", "update"] {
+            let mut item = items[0].clone();
+            item.title = title.into();
+            store
+                .transaction(|repo| {
+                    let p = repo.projects()?.remove(0);
+                    repo.upsert_github(
+                        &p,
+                        &item,
+                        &item.cache(None, "2026-11-01T00:00:00Z"),
+                        "2026-11-01T00:00:00Z",
+                        repo.next_position(p.id)?,
+                    )
+                })
+                .unwrap();
+            assert_eq!(
+                ops::show(&mut store, &Actor::Person, "demo#1")
+                    .unwrap()
+                    .data
+                    .title,
+                title
+            );
+        }
+    });
+}

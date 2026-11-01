@@ -61,7 +61,7 @@ fn set_claim(
         let mut changed = false;
         if let Some((project, item, linked)) = &fetched {
             let timestamp = now()?;
-            changed = repo.upsert_github(project, item, &item.cache(linked.as_ref(), &timestamp), &timestamp)?;
+            changed = repo.upsert_github(project, item, &item.cache(linked.as_ref(), &timestamp), &timestamp, repo.next_position(project.id)?)?;
         }
         let mut task = resolve(&repo.tasks()?, reference)?.clone();
         let before = task.clone();

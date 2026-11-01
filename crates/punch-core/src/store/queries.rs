@@ -207,18 +207,38 @@ impl<'a> Repository<'a> {
 }
 
 impl Repository<'_> {
+    pub(crate) fn github_identities(&self, project: i64) -> Result<Vec<(Kind, i64)>, PunchError> {
+        Ok(self
+            .db
+            .prepare(
+                "SELECT kind,gh_number FROM tasks WHERE project_id=?1 AND kind IN ('issue','pr')",
+            )?
+            .query_map([project], |r| Ok((parse(r.get(0)?)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?)
+    }
+    pub(crate) fn next_position(&self, project: i64) -> Result<f64, PunchError> {
+        Ok(self.db.query_row(
+            "SELECT COALESCE(MAX(position),0)+1 FROM tasks WHERE project_id=?1",
+            [project],
+            |r| r.get(0),
+        )?)
+    }
     pub(crate) fn upsert_github(
         &self,
         project: &Project,
         item: &crate::github::Item,
         cache: &GhCache,
         now: &str,
+        position: f64,
     ) -> Result<bool, PunchError> {
-        let tasks = self.tasks()?;
+        let old = self
+            .query_tasks(
+                "WHERE t.project_id=?1 AND t.kind=?2 AND t.gh_number=?3",
+                params![project.id, item.kind.to_string(), item.number],
+            )?
+            .pop();
         let assignee = cache.assignees.first().cloned();
-        let id = if let Some(old) = tasks.iter().find(|t| {
-            t.project_id == project.id && t.kind == item.kind && t.gh_number == Some(item.number)
-        }) {
+        let id = if let Some(old) = old.as_ref() {
             let mut task = old.clone();
             task.title = item.title.clone();
             task.assignee = assignee;
@@ -242,12 +262,6 @@ impl Repository<'_> {
             self.save_task(&task)?;
             task.id
         } else {
-            let position = tasks
-                .iter()
-                .filter(|t| t.project_id == project.id)
-                .map(|t| t.position)
-                .fold(0.0, f64::max)
-                + 1.0;
             self.db.execute("INSERT INTO tasks(project_id,kind,gh_number,title,assignee,assignee_kind,position,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![project.id,item.kind.to_string(),item.number,item.title,assignee,assignee.as_ref().map(|_|"person"),position,now])?;
             self.db.last_insert_rowid()
         };
