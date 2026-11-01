@@ -10,7 +10,8 @@ License: MIT.
 
 ## Usage
 
-The CLI supports local tasks, GitHub sync, and claims. Bare `punch` prints help.
+The CLI and board support local tasks, GitHub sync, claims, dependencies, and
+agent-safe writes.
 
 ```bash
 punch project add demo --name "Demo project"
@@ -47,7 +48,7 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. The board and MCP arrive in later phases.
+temporary directory.
 
 ## GitHub sync and claims
 
@@ -116,3 +117,58 @@ Relinking to another bucket or card table clears every local card association,
 including archived tasks, because old card IDs belong to the old table. Archived
 tasks receive no remote calls; the next sync mirrors active tasks at the new destination. Existing remote cards are left
 in place. Changing only the column map retains card IDs.
+
+## MCP and agent guide
+
+```bash
+punch guide
+punch mcp --as worker-1
+punch setup claude
+punch setup codex
+```
+
+`mcp` serves newline-delimited JSON-RPC on stdin/stdout synchronously. It exposes
+19 tools for the available CLI operations, including `guide`, `project_add`,
+`project_list`, `project_archive`, and `add_plan` (the `add --file` operation).
+Tools share CLI validation and JSON envelopes. Results include the envelope as
+both `structuredContent` and JSON text in `content`; refusals and partial
+failures set `isError: true`. No stdout logging is emitted.
+
+MCP always acts as an agent: `--as` overrides `PUNCH_AGENT`, then defaults to
+`mcp`. Tools cannot override that identity; `claim`'s `slot` argument controls
+the claimed slot separately. Tool fields use long CLI flag names (including
+`clear-due` and `clear-after`), positional argument names such as `reference`,
+and JSON arrays for `after`. `add_plan` accepts a `file` path; `-` is refused
+because stdin belongs to the transport. Paths must resolve through symlinks to
+regular files; devices, FIFOs, and stdin aliases are refused before opening.
+Request payloads (excluding LF or CRLF) and plan files are capped at 1 MiB.
+Oversized lines return Invalid Request; oversized plans return `invalid-input`.
+The server continues with the next request. `bc_status` reads mirror status;
+`bc_link` is exposed for parity but core ops refuse every MCP agent with
+`agent-cannot-manage-projects` because linking is person-only.
+
+Request ids must be strings or integers fitting i64 or u64 and are echoed
+exactly. Null, fractional, and out-of-range ids return Invalid Request with a
+null response id. Supported protocol versions are `2025-06-18` and `2025-11-25`;
+older or unknown versions negotiate `2025-06-18`. Batches are not supported.
+
+`guide` prints the embedded agent instructions. `setup` only prints the exact
+registration command for Claude Code or Codex; it does not execute it, open the
+store, or change configuration. Both also support `--json` envelopes.
+
+## Board
+
+Bare `punch` and `punch board` open the interactive board in a terminal.
+Use `h/l` for columns, `j/k` for cards, `p` for projects, `/` for text filtering,
+`Enter` for details, `?` for help, and `q` to quit. Ctrl-C quits from any mode
+and restores the terminal. Narrow terminals show the
+focused column and as many neighbours as fit. External CLI changes reload once
+a second. `--json` remains noninteractive; agents should use `list --json`.
+
+Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
+`P`, add with `a`, edit notes with `e` (set `$EDITOR`), and archive with `x`
+then `y`. Adding from “all” first asks for a project; new cards start in Todo.
+Notes edits and archive confirmations retain the original revision, so an
+external update produces `stale` and reloads instead of overwriting it. Other
+refusals flash for five seconds. `j/k` scroll long detail and help panes;
+`Esc` closes a pane or cancels input.

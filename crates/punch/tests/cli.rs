@@ -349,9 +349,9 @@ fn environment_actor_is_enforced_and_explicit_as_overrides_it() {
     );
 }
 #[test]
-fn bare_help_and_read_help_do_not_open_store() {
+fn json_help_and_read_help_do_not_open_store() {
     let dir = TempDir::new().unwrap();
-    run(&dir, &[]).success();
+    run(&dir, &["--json"]).success();
     for command in [
         vec!["list", "--help"],
         vec!["show", "--help"],
@@ -765,10 +765,45 @@ fn basecamp_failures_are_successful_json_warnings_and_visible_in_text_status() {
 #[test]
 fn bare_and_explicit_help_use_punch_name() {
     let dir = TempDir::new().unwrap();
-    for args in [vec![], vec!["--json"], vec!["--help"]] {
+    for args in [vec!["--json"], vec!["--help"]] {
         let output = run(&dir, &args).success().get_output().stdout.clone();
         let help = String::from_utf8(output).unwrap();
         assert!(help.contains("Usage: punch [OPTIONS] [COMMAND]"), "{help}");
     }
     assert!(!dir.path().join("punch.db").exists());
+}
+
+#[test]
+fn board_json_stays_noninteractive_and_nonterminal_board_refuses_cleanly() {
+    let dir = TempDir::new().unwrap();
+    run(&dir, &["board", "--json"]).code(2);
+    run(&dir, &[])
+        .code(2)
+        .stderr("invalid-input: the board requires a terminal; use list --json for agents\n");
+    run(&dir, &["board"]).code(2);
+}
+
+#[test]
+fn board_documentation_describes_current_entrypoints_once() {
+    let readme = include_str!("../../../README.md");
+    let contract = include_str!("../../../docs/refusal-codes.md");
+    assert_eq!(
+        readme
+            .matches("Bare `punch` and `punch board` open")
+            .count(),
+        1
+    );
+    assert!(readme.contains("Ctrl-C"));
+    assert!(!readme.contains("Bare `punch` prints help"));
+    assert!(!readme.contains("synchronization, the board"));
+    assert!(!readme.contains("phase 2"));
+    assert_eq!(
+        contract
+            .matches("Without a subcommand, an interactive terminal opens the board.")
+            .count(),
+        1
+    );
+    assert!(!contract.contains("Without a subcommand, punch prints help"));
+    assert!(contract.contains("bare `punch --json`"));
+    assert!(contract.contains("`punch board --json` exits 2"));
 }

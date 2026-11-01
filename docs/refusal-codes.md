@@ -5,6 +5,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 
 | code | meaning |
 |---|---|
+| `stale` | A revision-checked update saw a newer card revision. Nothing changes; the board reloads. Exit 1. |
 | `unknown-project` | The project slug does not exist. Exit 1. |
 | `project-exists` | The slug has different fields, or another project owns the GitHub repository. Exit 1. |
 | `unknown-task` | No task matches the reference. Exit 1. |
@@ -36,7 +37,7 @@ Malformed top-level JSON exits 2 without adding any tasks. A storage failure
 rolls back the entire plan and exits 3 with a refusal envelope.
 
 Help/version requests exit 0; with `--json`, their text is the success envelope's
-`data` string. Without a subcommand, punch prints help without opening a store.
+`data` string. `punch --help` prints help without opening a store.
 
 Sync reports a success envelope with per-project
 `{project,status,changed,cards,refusals}` results. `status` is `synced` or
@@ -55,3 +56,16 @@ operation's exit code:
 `bc link` also uses `agent-cannot-manage-projects` when called by an agent.
 `bc status` is readable by any actor. Basecamp-only projects still reconcile
 during sync, even though the per-project result array describes GitHub pulls.
+
+MCP reuses these refusal codes and the CLI JSON envelope. Refusals are tool
+results with `isError: true`, not JSON-RPC errors. Partial plans and partial
+sync failures also set `isError: true`; inspect each item's refusals even when
+`ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
+JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`), paths that do not resolve to regular
+files, and plan files over 1 MiB with `invalid-input`
+because stdin carries protocol messages. No phase 4 refusal codes were added.
+
+Without a subcommand, an interactive terminal opens the board. With JSON,
+bare `punch --json` returns the help envelope; `punch board --json` exits 2
+because the board is interactive. Without a terminal, bare `punch` and
+`punch board` exit 2 with `invalid-input` before opening a store.

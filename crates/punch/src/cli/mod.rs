@@ -22,6 +22,15 @@ pub enum Command {
         #[command(subcommand)]
         command: BcCommand,
     },
+    /// Run the synchronous stdio MCP server (always an agent).
+    Mcp,
+    /// Print the embedded agent guide; agents should pass --json.
+    Guide,
+    /// Print an MCP registration command without changing configuration.
+    Setup {
+        #[arg(value_enum)]
+        target: SetupTarget,
+    },
     Sync {
         #[arg(short = 'p', long)]
         project: Option<String>,
@@ -34,6 +43,8 @@ pub enum Command {
     Unclaim {
         reference: String,
     },
+    #[command(about = "Open the interactive board")]
+    Board,
     #[command(about = "List ready tasks; agents should pass --json")]
     Ready {
         #[arg(short = 'p', long)]
@@ -73,6 +84,12 @@ pub enum Command {
         command: ProjectCommand,
     },
 }
+#[derive(Clone, clap::ValueEnum)]
+pub enum SetupTarget {
+    Claude,
+    Codex,
+}
+
 #[derive(clap::Args)]
 pub struct EditCommand {
     #[arg(long)]
@@ -202,6 +219,29 @@ fn present<T: Serialize>(out: Outcome<T>) -> Result<Reply, PunchError> {
     })
 }
 pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
+    execute_with_plan(cli, None)
+}
+
+// MCP supplies a validated, bounded plan while sharing the CLI dispatcher.
+pub(crate) fn execute_with_plan(cli: &Cli, plan: Option<&str>) -> Result<Reply, PunchError> {
+    if matches!(cli.command, Some(Command::Guide)) {
+        return present(Outcome {
+            changed: false,
+            data: include_str!("../guide.md").trim_end(),
+            warnings: vec![],
+        });
+    }
+    if let Some(Command::Setup { target }) = &cli.command {
+        let command = match target {
+            SetupTarget::Claude => "claude mcp add punch -- punch mcp",
+            SetupTarget::Codex => "codex mcp add punch -- punch mcp",
+        };
+        return present(Outcome {
+            changed: false,
+            data: command,
+            warnings: vec![],
+        });
+    }
     let actor = cli
         .slot
         .as_ref()
@@ -232,6 +272,9 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
                 present(ops::bc_status(&mut store, &actor, project.as_deref())?)
             }
         },
+        Command::Setup { .. } => unreachable!("setup is handled before opening the store"),
+        Command::Guide => unreachable!("guide is handled before opening the store"),
+        Command::Mcp => Err(PunchError::usage("MCP uses the stdio transport")),
         Command::Sync { project } => {
             let out = ops::sync(
                 &mut store,
@@ -262,6 +305,7 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
             &punch_core::github::RealGh,
             reference,
         )?),
+        Command::Board => Err(PunchError::usage("board is interactive; use list --json")),
         Command::Move { reference, column } => {
             present(ops::move_task(&mut store, &actor, reference, *column)?)
         }
@@ -300,7 +344,9 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         )?),
         Command::Add(a) => {
             if let Some(path) = &a.file {
-                let text = if path == "-" {
+                let text = if let Some(plan) = plan {
+                    plan.to_owned()
+                } else if path == "-" {
                     std::io::read_to_string(std::io::stdin())?
                 } else {
                     std::fs::read_to_string(path)?
@@ -377,7 +423,9 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
 }
 
 pub fn print_text(data: &serde_json::Value) {
-    if let Some(items) = data.as_array() {
+    if let Some(text) = data.as_str() {
+        println!("{text}");
+    } else if let Some(items) = data.as_array() {
         if items.is_empty() {
             println!("No items.");
         }
