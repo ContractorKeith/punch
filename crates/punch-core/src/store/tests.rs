@@ -535,3 +535,31 @@ fn add_at_max_task_id_returns_storage_refusal() {
         );
     });
 }
+
+#[test]
+fn archive_and_unarchive_bump_revision_only_on_change() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        assert_eq!(add(&mut store, "work").revision, 1);
+        for (archived, revision) in [(true, 2), (false, 3)] {
+            for changed in [true, false] {
+                let before = store.connection.total_changes();
+                let result = if archived {
+                    ops::archive(&mut store, &Actor::Person, "t1")
+                } else {
+                    ops::unarchive(&mut store, &Actor::Person, "t1")
+                }
+                .unwrap();
+                assert_eq!(result.changed, changed);
+                assert_eq!(result.data.revision, revision);
+                let persisted = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+                assert_eq!(persisted.revision, revision);
+                assert_eq!(persisted.archived, archived);
+                if !changed {
+                    assert_eq!(store.connection.total_changes(), before);
+                }
+            }
+        }
+    });
+}
