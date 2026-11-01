@@ -898,3 +898,90 @@ fn slow_claim_and_unclaim_allow_local_edits_and_preserve_them() {
         }
     });
 }
+
+// Exercise malformed GraphQL responses after a valid cache has been imported.
+#[test]
+fn malformed_reference_numbers_fail_sync_without_erasing_cached_links() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use serde_json::json;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        let mut store = Store::open().unwrap();
+        ops::project_add(
+            &mut store,
+            &Actor::Person,
+            ops::ProjectAdd {
+                slug: "cli".into(),
+                name: None,
+                github: Some("cli/cli".into()),
+                scope: Some(SyncScope::All),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops::sync(&mut store, &Actor::Person, &RealGh, None)
+                .unwrap()
+                .data[0]
+                .status,
+            "synced"
+        );
+        let before = ops::show(&mut store, &Actor::Person, "cli#14895")
+            .unwrap()
+            .data;
+        assert_eq!(before.column, Column::Review);
+        for field in ["timeline", "closing"] {
+            for number in [
+                None,
+                Some(json!("14846")),
+                Some(json!(null)),
+                Some(json!(false)),
+            ] {
+                let mut node = json!({"repository":{"nameWithOwner":"cli/cli"}});
+                if let Some(number) = number {
+                    node["number"] = number;
+                }
+                let response = if field == "timeline" {
+                    json!({"data":{"repository":{"issue":{"timelineItems":{
+                        "nodes":[{"source":node}], "pageInfo":{"hasNextPage":false}
+                    }}}}})
+                } else {
+                    json!({"data":{"repository":{"pullRequest":{"closingIssuesReferences":{
+                        "nodes":[node], "pageInfo":{"hasNextPage":false}
+                    }}}}})
+                };
+                let path = state.join(format!("{field}-response"));
+                std::fs::write(&path, response.to_string()).unwrap();
+                let out = ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap();
+                assert_eq!(out.data[0].status, "failed", "{field}");
+                assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+                assert_eq!(
+                    ops::show(&mut store, &Actor::Person, "cli#14895")
+                        .unwrap()
+                        .data,
+                    before
+                );
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    });
+}
+
+#[test]
+fn empty_and_non_pr_cross_references_are_skipped() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        std::fs::write(
+            state.join("timeline-response"),
+            serde_json::json!({
+                "data":{"repository":{"issue":{"timelineItems":{
+                    "nodes":[{}, {"source":null}, {"source":{}}, {"source":{"__typename":"Issue"}}],
+                    "pageInfo":{"hasNextPage":false}
+                }}}}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(RealGh.linked("cli/cli", 14895).unwrap().is_empty());
+    });
+}

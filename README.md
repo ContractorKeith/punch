@@ -75,6 +75,9 @@ before the short local write transaction, so reads and local writes keep working
 during a slow fetch. Each `gh` subprocess has a 30-second timeout (`gh-failed`).
 GraphQL connection walks reject repeated cursors and stop after 100 pages.
 
+Malformed PR or closing-reference numbers fail sync with `gh-failed`, preserving
+the project's cached cards and links. Empty non-PR cross-references are skipped.
+
 For GitHub cards, claim/unclaim first adds/removes `@me` with `gh issue edit`,
 then refreshes the card before committing locally. A remote or refresh failure
 returns `offline` or `gh-failed`, preserving local fields. Local claims use the

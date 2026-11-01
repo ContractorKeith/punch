@@ -8,6 +8,10 @@ fi
 case "$*" in
   *view*) if test -f "$PUNCH_STATE_DIR/view-response"; then cat "$PUNCH_STATE_DIR/view-response"; exit 0; fi ;;
 esac
+case "$*" in
+  *timelineItems*) if test -f "$PUNCH_STATE_DIR/timeline-response"; then cat "$PUNCH_STATE_DIR/timeline-response"; exit 0; fi ;;
+  *closingIssuesReferences*) if test -f "$PUNCH_STATE_DIR/closing-response"; then cat "$PUNCH_STATE_DIR/closing-response"; exit 0; fi ;;
+esac
 if test -f "$PUNCH_STATE_DIR/cursor-mode"; then
   count=0
   if test -f "$PUNCH_STATE_DIR/page-count"; then count=$(cat "$PUNCH_STATE_DIR/page-count"); fi
