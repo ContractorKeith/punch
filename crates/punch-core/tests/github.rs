@@ -185,8 +185,9 @@ fn sync_refreshes_closed_and_merged_cards_without_touching_local_fields() {
             .gh_cache
             .unwrap()
             .fetched_at;
+        // Nothing changed on GitHub: fetched_at refreshes, the sync reports no change.
         assert!(
-            ops::sync(&mut store, &Actor::Person, &gh, None)
+            !ops::sync(&mut store, &Actor::Person, &gh, None)
                 .unwrap()
                 .changed
         );
@@ -600,5 +601,30 @@ fn sync_rolls_back_cards_inserted_before_a_later_refresh_failure() {
             before
         );
         assert!(ops::show(&mut store, &Actor::Person, "demo#4").is_err());
+    });
+}
+
+// A sync that only refreshes fetched_at must not bump revisions: the TUI uses
+// revision for stale checks and the Basecamp mirror keys off real changes.
+#[test]
+fn resync_without_github_changes_keeps_revision_and_reports_unchanged() {
+    isolated(|| {
+        let (_dir, mut store) = setup();
+        let gh =
+            Fake::new(serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap());
+        ops::sync(&mut store, &Actor::Person, &gh, Some("demo")).unwrap();
+        let before = ops::show(&mut store, &Actor::Person, "demo#1")
+            .unwrap()
+            .data;
+        let again = ops::sync(&mut store, &Actor::Person, &gh, Some("demo")).unwrap();
+        let after = ops::show(&mut store, &Actor::Person, "demo#1")
+            .unwrap()
+            .data;
+        assert!(!again.changed);
+        assert_eq!(after.revision, before.revision);
+        assert_ne!(
+            after.gh_cache.unwrap().fetched_at,
+            before.gh_cache.unwrap().fetched_at
+        );
     });
 }

@@ -157,7 +157,18 @@ impl Repository<'_> {
             task.title = item.title.clone();
             task.assignee = assignee;
             task.assignee_kind = task.assignee.as_ref().map(|_| AssigneeKind::Person);
-            if task == *old && old.gh_cache.as_ref() == Some(cache) {
+            // fetched_at alone is not a change: refresh it without a revision bump.
+            let same_cache = old.gh_cache.as_ref().is_some_and(|c| {
+                GhCache {
+                    fetched_at: cache.fetched_at.clone(),
+                    ..c.clone()
+                } == *cache
+            });
+            if task == *old && same_cache {
+                self.db.execute(
+                    "UPDATE gh_cache SET fetched_at=?1 WHERE task_id=?2",
+                    params![cache.fetched_at, old.id],
+                )?;
                 return Ok(false);
             }
             task.revision += 1;
