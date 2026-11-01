@@ -1091,3 +1091,87 @@ fn trait_pr_validation_preserves_cache_for_list_refresh_and_linked_items() {
         }
     });
 }
+
+#[test]
+fn large_existing_card_refresh_uses_keyed_replacement_without_scans() {
+    isolated(|| {
+        let (_dir, mut store) = setup();
+        let template: Item = serde_json::from_value(refresh_value()).unwrap();
+        let gh = Fake::new(
+            (1..=2048)
+                .map(|number| {
+                    let mut item = template.clone();
+                    item.number = number;
+                    item
+                })
+                .collect(),
+        );
+        assert_eq!(
+            ops::sync(&mut store, &Actor::Person, &gh, None)
+                .unwrap()
+                .data[0]
+                .cards,
+            2048
+        );
+        for item in gh.items.borrow_mut().iter_mut() {
+            item.title = format!("refreshed {}", item.number);
+            if item.number % 2 == 0 {
+                item.state = "CLOSED".into();
+            }
+        }
+        let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+        assert!(out.changed);
+        assert_eq!(out.data[0].cards, 2048);
+        let cards = ops::list(
+            &mut store,
+            &Actor::Person,
+            ops::List {
+                all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .data;
+        assert_eq!(cards.len(), 2048);
+        for card in cards {
+            let number = card.gh_number.unwrap();
+            assert_eq!(card.title, format!("refreshed {number}"));
+            assert_eq!(card.revision, 2);
+            assert_eq!(
+                card.column,
+                if number % 2 == 0 {
+                    Column::Done
+                } else {
+                    Column::Todo
+                }
+            );
+        }
+        // Behavior alone cannot catch quadratic merging. Guard the refresh loop's
+        // keyed replacement structurally, without a machine-dependent timing limit.
+        let source: String = include_str!("../src/ops/sync.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let refresh = source
+            .split_once("for&(kind,number)inexisting{")
+            .unwrap()
+            .1
+            .split_once("letissues:")
+            .unwrap()
+            .0;
+        assert!(
+            refresh.contains("indices.get(&key)"),
+            "existing-card refresh must look up its index by identity"
+        );
+        for scan in [
+            "items.retain(",
+            "items.iter(",
+            "items.iter_mut(",
+            "items.clone(",
+            "in&items",
+            "initems",
+        ] {
+            assert!(!refresh.contains(scan), "per-card scan in refresh: {scan}");
+        }
+    });
+}
