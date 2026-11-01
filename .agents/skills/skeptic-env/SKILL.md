@@ -80,4 +80,4 @@ repo. Basecamp: never point `punch bc link` at a real project; use a fake
 
 ## Earlier rounds
 
-None before 2026-11-01.
+- 2026-11-01, round 1, Linux only: PRs #1 `3cc8e23`, #3 `f302e3f`, #2 `942ca1e`, #4 `5699af1`, #5 `13b1f9e`. Report `worklog/reports/punch-review-2026-11-01.md`. Issues #12–#39 (`skeptic`), none fixed at filing. Re-check them first.
