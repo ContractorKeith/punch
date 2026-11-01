@@ -985,3 +985,109 @@ fn empty_and_non_pr_cross_references_are_skipped() {
         assert!(RealGh.linked("cli/cli", 14895).unwrap().is_empty());
     });
 }
+
+#[test]
+fn real_pr_validation_rejects_invalid_draft_and_review_before_import() {
+    isolated(|| {
+        use punch_core::github::RealGh;
+        use serde_json::json;
+        let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        let valid = json!({"number":14846,"title":"PR","state":"OPEN","assignees":[],
+            "url":"https://github.com/cli/cli/pull/14846","updatedAt":"2026-11-01T00:00:00Z",
+            "isDraft":false,"reviewDecision":null});
+        for (field, value) in [
+            ("isDraft", None),
+            ("isDraft", Some(json!(null))),
+            ("isDraft", Some(json!("false"))),
+            ("reviewDecision", Some(json!("GARBAGE"))),
+            ("reviewDecision", Some(json!(""))),
+            ("reviewDecision", Some(json!(true))),
+        ] {
+            let mut invalid = valid.clone();
+            if let Some(value) = value {
+                invalid[field] = value;
+            } else {
+                invalid.as_object_mut().unwrap().remove(field);
+            }
+            std::fs::write(state.join("pr-response"), invalid.to_string()).unwrap();
+            assert_eq!(
+                RealGh.get("cli/cli", Kind::Pr, 14846).unwrap_err().code,
+                "gh-failed",
+                "{field}"
+            );
+            std::fs::write(state.join("pr-list-response"), json!([invalid]).to_string()).unwrap();
+            let (_dir, mut store) = setup();
+            let out = ops::sync(&mut store, &Actor::Person, &RealGh, None).unwrap();
+            assert_eq!(out.data[0].status, "failed");
+            assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+            assert!(
+                ops::list(&mut store, &Actor::Person, ops::List::default())
+                    .unwrap()
+                    .data
+                    .is_empty()
+            );
+        }
+        for draft in [false, true] {
+            for review in [
+                json!(null),
+                json!("APPROVED"),
+                json!("CHANGES_REQUESTED"),
+                json!("REVIEW_REQUIRED"),
+            ] {
+                let mut value = valid.clone();
+                value["isDraft"] = json!(draft);
+                value["reviewDecision"] = review;
+                std::fs::write(state.join("pr-response"), value.to_string()).unwrap();
+                assert_eq!(
+                    RealGh.get("cli/cli", Kind::Pr, 14846).unwrap().is_draft,
+                    Some(draft)
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn trait_pr_validation_preserves_cache_for_list_refresh_and_linked_items() {
+    isolated(|| {
+        for stage in ["list", "refresh", "linked"] {
+            for invalid in ["draft", "review"] {
+                let (_dir, mut store) = setup();
+                let mut gh = Fake::new(
+                    serde_json::from_str(include_str!("fixtures/github/open.json")).unwrap(),
+                );
+                ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                let before = ops::list(&mut store, &Actor::Person, ops::List::default())
+                    .unwrap()
+                    .data;
+                let mut item = gh.items.borrow()[1].clone();
+                if invalid == "draft" {
+                    item.is_draft = None;
+                } else {
+                    item.review_decision = Some("GARBAGE".into());
+                }
+                match stage {
+                    "list" => gh.items.borrow_mut()[1] = item,
+                    "refresh" => {
+                        gh.items.borrow_mut()[1].state = "CLOSED".into();
+                        gh.items.borrow_mut()[1].is_draft = item.is_draft;
+                        gh.items.borrow_mut()[1].review_decision = item.review_decision;
+                    }
+                    _ => {
+                        item.closes = vec![1];
+                        gh.links = vec![item];
+                    }
+                }
+                let out = ops::sync(&mut store, &Actor::Person, &gh, None).unwrap();
+                assert_eq!(out.data[0].status, "failed", "{stage}/{invalid}");
+                assert_eq!(out.data[0].refusals[0].code, "gh-failed");
+                assert_eq!(
+                    ops::list(&mut store, &Actor::Person, ops::List::default())
+                        .unwrap()
+                        .data,
+                    before
+                );
+            }
+        }
+    });
+}

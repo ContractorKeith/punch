@@ -23,7 +23,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
 | `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs. Read back before retrying a write. Exit 3. |
 | `offline` | A GitHub call failed with a network error; the message preserves gh stderr. Claim/unclaim leave local state unchanged. Exit 1. |
-| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data; the message includes its stderr when gh failed. Claim/unclaim leave local state unchanged. Exit 1. |
+| `gh-failed` | gh could not run, returned a failure, exceeded its 30-second timeout, or returned invalid identity/state/reference/pagination data or PR draft/review fields; the message includes its stderr when gh failed. Claim/unclaim leave local state unchanged. Exit 1. |
 
 Success, including a no-op, exits 0. A successful JSON result has exactly
 `ok`, `changed`, `data`, and `warnings`. Task creation returns

@@ -6,6 +6,8 @@ if test -f "$PUNCH_STATE_DIR/slow"; then
   while ! test -f "$PUNCH_STATE_DIR/release"; do sleep 0.05; done
 fi
 case "$*" in
+  *'pr list'*) if test -f "$PUNCH_STATE_DIR/pr-list-response"; then cat "$PUNCH_STATE_DIR/pr-list-response"; exit 0; fi ;;
+  *'pr view'*) if test -f "$PUNCH_STATE_DIR/pr-response"; then cat "$PUNCH_STATE_DIR/pr-response"; exit 0; fi ;;
   *view*) if test -f "$PUNCH_STATE_DIR/view-response"; then cat "$PUNCH_STATE_DIR/view-response"; exit 0; fi ;;
 esac
 case "$*" in

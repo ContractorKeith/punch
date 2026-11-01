@@ -77,6 +77,8 @@ GraphQL connection walks reject repeated cursors and stop after 100 pages.
 
 Malformed PR or closing-reference numbers fail sync with `gh-failed`, preserving
 the project's cached cards and links. Empty non-PR cross-references are skipped.
+PRs require a boolean draft state and a review decision of null, `APPROVED`,
+`CHANGES_REQUESTED`, or `REVIEW_REQUIRED`; invalid values also fail before import.
 
 For GitHub cards, claim/unclaim first adds/removes `@me` with `gh issue edit`,
 then refreshes the card before committing locally. A remote or refresh failure
