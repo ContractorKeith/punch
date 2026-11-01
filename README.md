@@ -89,6 +89,49 @@ actor label (`person` or the agent's identity) as assignee; `--slot` sets the
 slot separately, defaulting to the agent identity. Unclaim clears the local
 assignee and slot; GitHub assignees always come from the refreshed card.
 
+## MCP and agent guide
+
+```bash
+punch guide
+punch mcp --as worker-1
+punch setup claude
+punch setup codex
+```
+
+`mcp` serves newline-delimited JSON-RPC on stdin/stdout synchronously. It exposes
+17 tools for the available CLI operations, including `guide`, `project_add`,
+`project_list`, `project_archive`, and `add_plan` (the `add --file` operation).
+Tools share CLI validation and JSON envelopes. Results include the envelope as
+both `structuredContent` and JSON text in `content`; refusals and partial
+failures set `isError: true`. No stdout logging is emitted.
+
+MCP always acts as an agent: `--as` overrides `PUNCH_AGENT`, then defaults to
+`mcp`. Tools cannot override that identity; `claim`'s `slot` argument controls
+the claimed slot separately. Tool fields use long CLI flag names (including
+`clear-due` and `clear-after`), positional argument names such as `reference`,
+and JSON arrays for `after`. `add_plan` accepts a `file` path; `-` is refused
+because stdin belongs to the transport. Paths must resolve through symlinks to
+regular files; devices, FIFOs, and stdin aliases are refused before opening.
+Request payloads (excluding LF or CRLF) and plan files are capped at 1 MiB.
+Oversized lines return Invalid Request; oversized plans return `invalid-input`.
+Serialized tool results, including both text and structured content and JSON
+escaping, are capped at 4 MiB. A committed write (`changed: true`) returns a
+small successful identity receipt (task ref and revision for task operations)
+with `result-truncated: result exceeded 4 MiB; use show to read it`.
+Larger read results return an `isError: true`
+`invalid-input` refusal: narrow the request with a project filter, a limit,
+or show a single task. The server continues with the next request. Basecamp
+tools arrive in phase 5.
+
+Request ids must be strings or integers fitting i64 or u64 and are echoed
+exactly. Null, fractional, and out-of-range ids return Invalid Request with a
+null response id. Supported protocol versions are `2025-06-18` and `2025-11-25`;
+older or unknown versions negotiate `2025-06-18`. Batches are not supported.
+
+`guide` prints the embedded agent instructions. `setup` only prints the exact
+registration command for Claude Code or Codex; it does not execute it, open the
+store, or change configuration. Both also support `--json` envelopes.
+
 ## Board
 
 Bare `punch` and `punch board` open the interactive board in a terminal.

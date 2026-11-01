@@ -45,7 +45,24 @@ Sync reports a success envelope with per-project
 exit 3, while successful projects remain committed. An unlinked or archived
 project is skipped. An unknown `-p` project returns `unknown-project`, exit 1.
 
+MCP reuses these refusal codes and the CLI JSON envelope. Refusals are tool
+results with `isError: true`, not JSON-RPC errors. Partial plans and partial
+sync failures also set `isError: true`; inspect each item's refusals even when
+`ok` is true. Malformed JSON-RPC, unknown methods, and unknown tool names use
+JSON-RPC errors. MCP `add_plan` refuses stdin (`file: "-"`), paths that do not resolve to regular
+files, and plan files over 1 MiB with `invalid-input`
+because stdin carries protocol messages. Serialized tool results over 4 MiB
+with `changed: false` return `invalid-input` with `isError: true`; narrow the request with a
+project filter, a limit, or show a single task. The cap counts both result
+envelopes and JSON escaping. No phase 4 refusal codes were added.
+
 Without a subcommand, an interactive terminal opens the board. With JSON,
 bare `punch --json` returns the help envelope; `punch board --json` exits 2
 because the board is interactive. Without a terminal, bare `punch` and
 `punch board` exit 2 with `invalid-input` before opening a store.
+
+## Warnings
+
+| code | meaning |
+|---|---|
+| `result-truncated` | An MCP result exceeded 4 MiB after a committed write (`changed: true`). The successful result contains an identity receipt (task ref and revision for task operations); use show to read it. Do not retry the write. |

@@ -1,5 +1,6 @@
 //! CLI adapter over punch-core operations.
 mod cli;
+mod mcp;
 mod tui;
 use clap::{CommandFactory, Parser};
 use punch_core::error::PunchError;
@@ -63,6 +64,15 @@ fn main() -> ExitCode {
             println!();
         }
         return ExitCode::SUCCESS;
+    }
+    if matches!(args.command, Some(cli::Command::Mcp)) {
+        return match mcp::run(args.slot.as_deref().unwrap_or("mcp")) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{}: {}", e.code, e.message);
+                ExitCode::from(e.exit_code)
+            }
+        };
     }
     match cli::execute(&args) {
         Ok(reply) => {
