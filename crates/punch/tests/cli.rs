@@ -629,3 +629,14 @@ fn github_cli_reports_partial_sync_and_claim_failures_without_local_changes() {
         }
     }
 }
+
+#[test]
+fn bare_and_explicit_help_use_punch_name() {
+    let dir = TempDir::new().unwrap();
+    for args in [vec![], vec!["--json"], vec!["--help"]] {
+        let output = run(&dir, &args).success().get_output().stdout.clone();
+        let help = String::from_utf8(output).unwrap();
+        assert!(help.contains("Usage: punch [OPTIONS] [COMMAND]"), "{help}");
+    }
+    assert!(!dir.path().join("punch.db").exists());
+}

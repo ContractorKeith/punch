@@ -20,7 +20,7 @@ renamed once released. Each phase adds its codes here in the same PR.
 | `after-cycle` | The dependency would create a cycle. Exit 1. |
 | `invalid-input` | Invalid arguments, date, priority, or plan JSON. Exit 2. |
 | `store-too-new` | The store schema is newer than this binary supports. Exit 3. |
-| `storage-failed` | Filesystem, SQLite, or serialization failure. Read back before retrying a write. Exit 3. |
+| `storage-failed` | Filesystem, SQLite, serialization failure, or exhausted task IDs. Read back before retrying a write. Exit 3. |
 | `offline` | A GitHub call failed with a network error; the message preserves gh stderr. Claim/unclaim leave local state unchanged. Exit 1. |
 | `gh-failed` | gh could not run, returned a failure, or returned invalid data; the message includes its stderr when gh failed. Claim/unclaim leave local state unchanged. Exit 1. |
 

@@ -3,7 +3,11 @@ use clap::{Parser, Subcommand};
 use punch_core::{error::PunchError, model::*, ops, store::Store};
 use serde::Serialize;
 #[derive(Parser)]
-#[command(version, about = "A terminal punch list across every project")]
+#[command(
+    name = "punch",
+    version,
+    about = "A terminal punch list across every project"
+)]
 pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
