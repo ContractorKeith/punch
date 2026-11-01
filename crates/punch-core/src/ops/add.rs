@@ -98,7 +98,13 @@ pub(super) fn add_in(repo: &Repository<'_>, args: &Add) -> Result<Outcome<Added>
         basecamp_card: None,
     };
     // Validate before writing, including the next SQLite rowid, to keep failed plan items empty.
-    t.id = tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+    t.id = tasks
+        .iter()
+        .map(|t| t.id)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| PunchError::storage("task id space exhausted"))?;
     t.after = dependencies(&tasks, t.id, t.project_id, &args.after)?;
     t.id = repo.insert_task(&t)?;
     if !t.after.is_empty() {

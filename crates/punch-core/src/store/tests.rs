@@ -498,3 +498,40 @@ fn concurrent_first_opens_serialize() {
         }
     }
 }
+
+#[test]
+fn add_at_max_task_id_returns_storage_refusal() {
+    isolated(|_| {
+        let mut store = Store::open().unwrap();
+        project(&mut store);
+        add(&mut store, "last");
+        store
+            .connection
+            .execute("UPDATE tasks SET id=?1", [i64::MAX])
+            .unwrap();
+        let error = ops::add(
+            &mut store,
+            &Actor::Person,
+            ops::Add {
+                project: "demo".into(),
+                title: "next".into(),
+                notes: String::new(),
+                priority: Priority(2),
+                due: None,
+                after: vec![],
+                assignee: None,
+                agent: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "storage-failed");
+        assert_eq!(error.exit_code, 3);
+        assert_eq!(
+            store
+                .connection
+                .query_row("SELECT COUNT(*) FROM tasks", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    });
+}
