@@ -47,8 +47,7 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. The board, MCP, and Basecamp integration arrive in later
-phases.
+temporary directory. The board and Basecamp integration arrive in later phases.
 
 ## GitHub sync and claims
 
@@ -117,6 +116,3 @@ older or unknown versions negotiate `2025-06-18`. Batches are not supported.
 `guide` prints the embedded agent instructions. `setup` only prints the exact
 registration command for Claude Code or Codex; it does not execute it, open the
 store, or change configuration. Both also support `--json` envelopes.
-
-Sync clarification: a refresh changing only `fetched_at` reports
-`changed: false` and leaves task revisions unchanged.

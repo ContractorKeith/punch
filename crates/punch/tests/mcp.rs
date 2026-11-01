@@ -820,3 +820,15 @@ fn plan_limit_accepts_one_mib_and_refuses_larger_files_with_both_envelopes() {
         assert_eq!(replies[2]["result"], json!({}));
     }
 }
+
+#[test]
+fn readme_states_fetched_at_only_changed_false_once() {
+    let readme = include_str!("../../../README.md");
+    assert_eq!(readme.matches("fetched_at").count(), 1);
+    assert!(
+        readme.contains(
+            "A fetched_at-only refresh reports `changed: false` and keeps task revisions."
+        )
+    );
+    assert!(!readme.contains("MCP, and Basecamp integration arrive in later"));
+}
