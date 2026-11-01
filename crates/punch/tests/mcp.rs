@@ -754,3 +754,17 @@ fn version_negotiation_only_advertises_supported_non_batch_versions() {
         assert_eq!(replies[2]["result"], json!({}));
     }
 }
+
+#[test]
+fn request_id_boolean_is_invalid() {
+    assert_invalid_id("true");
+    assert_invalid_id("false");
+}
+#[test]
+fn request_id_object_is_invalid() {
+    assert_invalid_id("{}");
+}
+#[test]
+fn request_id_array_is_invalid() {
+    assert_invalid_id("[]");
+}
