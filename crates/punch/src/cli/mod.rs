@@ -30,6 +30,8 @@ pub enum Command {
     Unclaim {
         reference: String,
     },
+    #[command(about = "Open the interactive board")]
+    Board,
     #[command(about = "List ready tasks; agents should pass --json")]
     Ready {
         #[arg(short = 'p', long)]
@@ -203,6 +205,7 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
             &punch_core::github::RealGh,
             reference,
         )?),
+        Command::Board => Err(PunchError::usage("board is interactive; use list --json")),
         Command::Move { reference, column } => {
             present(ops::move_task(&mut store, &actor, reference, *column)?)
         }

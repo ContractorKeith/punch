@@ -10,7 +10,8 @@ License: MIT.
 
 ## Usage
 
-The CLI supports local tasks, GitHub sync, and claims. Bare `punch` prints help.
+The CLI and board support local tasks, GitHub sync, claims, dependencies, and
+agent-safe writes.
 
 ```bash
 punch project add demo --name "Demo project"
@@ -47,8 +48,7 @@ holds the WAL write lock. Mutations serialize in immediate transactions.
 
 The store lives in `$PUNCH_STATE_DIR/punch.db`, otherwise the platform data
 directory under `punch/`. For development, always set `PUNCH_STATE_DIR` to a
-temporary directory. The board, MCP, and Basecamp integration arrive in later
-phases.
+temporary directory.
 
 ## GitHub sync and claims
 
@@ -81,3 +81,20 @@ returns `offline` or `gh-failed`, preserving local fields. Local claims use the
 actor label (`person` or the agent's identity) as assignee; `--slot` sets the
 slot separately, defaulting to the agent identity. Unclaim clears the local
 assignee and slot; GitHub assignees always come from the refreshed card.
+
+## Board
+
+Bare `punch` and `punch board` open the interactive board in a terminal.
+Use `h/l` for columns, `j/k` for cards, `p` for projects, `/` for text filtering,
+`Enter` for details, `?` for help, and `q` to quit. Ctrl-C quits from any mode
+and restores the terminal. Narrow terminals show the
+focused column and as many neighbours as fit. External CLI changes reload once
+a second. `--json` remains noninteractive; agents should use `list --json`.
+
+Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
+`P`, add with `a`, edit notes with `e` (set `$EDITOR`), and archive with `x`
+then `y`. Adding from “all” first asks for a project; new cards start in Todo.
+Notes edits and archive confirmations retain the original revision, so an
+external update produces `stale` and reloads instead of overwriting it. Other
+refusals flash for five seconds. `j/k` scroll long detail and help panes;
+`Esc` closes a pane or cancels input.
