@@ -640,3 +640,37 @@ fn detail_pane_snapshot_shows_all_task_and_github_fields() {
         check_snapshot("detail", text, include_str!("snapshots/detail.txt"));
     });
 }
+
+#[test]
+fn event_dispatch_preserves_modifiers_and_ignores_key_releases() {
+    isolated(|_| {
+        use crossterm::event::{Event, KeyEvent, KeyEventKind, KeyModifiers as M};
+        let mut store = seed();
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.mode = Mode::Filter("keep".into());
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('v'), M::ALT)),
+        );
+        assert_eq!(board.mode, Mode::Filter("keep".into()));
+        let mut release = KeyEvent::new(Char('c'), M::CONTROL);
+        release.kind = KeyEventKind::Release;
+        super::dispatch_event(&mut board, &mut store, Event::Key(release));
+        assert!(!board.quit);
+        super::dispatch_event(&mut board, &mut store, Event::Resize(80, 24));
+        assert_eq!(board.mode, Mode::Filter("keep".into()));
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('A'), M::SHIFT)),
+        );
+        assert_eq!(board.mode, Mode::Filter("keepA".into()));
+        super::dispatch_event(
+            &mut board,
+            &mut store,
+            Event::Key(KeyEvent::new(Char('c'), M::CONTROL)),
+        );
+        assert!(board.quit, "event loop lost Ctrl-C modifiers");
+    });
+}

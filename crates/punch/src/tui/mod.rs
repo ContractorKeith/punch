@@ -17,11 +17,8 @@ pub fn run(actor: Actor) -> Result<(), PunchError> {
     let mut last_poll = Instant::now();
     while !board.quit {
         terminal.draw(|frame| view::draw(frame, &board))?;
-        if event::poll(Duration::from_millis(100))?
-            && let Event::Key(key) = event::read()?
-            && key.kind != KeyEventKind::Release
-        {
-            board.key(key, &mut store);
+        if event::poll(Duration::from_millis(100))? {
+            dispatch_event(&mut board, &mut store, event::read()?);
             if let Some(snapshot) = board.edit_request.take() {
                 match session.edit(&mut terminal, &snapshot.notes) {
                     Ok(notes) => board.save_notes(&mut store, &snapshot, notes),
@@ -37,4 +34,13 @@ pub fn run(actor: Actor) -> Result<(), PunchError> {
         }
     }
     Ok(())
+}
+
+// Preserve the complete key event at the event-loop boundary.
+fn dispatch_event(board: &mut model::Board, store: &mut Store, event: Event) {
+    if let Event::Key(key) = event
+        && key.kind != KeyEventKind::Release
+    {
+        board.key(key, store);
+    }
 }
