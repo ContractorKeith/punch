@@ -8,6 +8,21 @@ fi
 case "$*" in
   *view*) if test -f "$PUNCH_STATE_DIR/view-response"; then cat "$PUNCH_STATE_DIR/view-response"; exit 0; fi ;;
 esac
+if test -f "$PUNCH_STATE_DIR/cursor-mode"; then
+  count=0
+  if test -f "$PUNCH_STATE_DIR/page-count"; then count=$(cat "$PUNCH_STATE_DIR/page-count"); fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$PUNCH_STATE_DIR/page-count"
+  mode=$(cat "$PUNCH_STATE_DIR/cursor-mode")
+  next=true
+  case "$mode" in
+    repeat) cursor=A; if test "$count" -gt 2; then next=false; fi ;;
+    cycle) cursor=A; if test "$count" -eq 2; then cursor=B; fi; if test "$count" -gt 3; then next=false; fi ;;
+    unique) cursor=$count; if test "$count" -gt 101; then next=false; fi ;;
+  esac
+  printf '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":%s,"endCursor":"%s"}}}}}}\n' "$next" "$cursor"
+  exit 0
+fi
 case "${PUNCH_GH_FAILURE:-}" in
   offline) printf '%s\n' 'network connection failed: fixture stderr' >&2; exit 1 ;;
   denied) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;

@@ -764,3 +764,24 @@ fn refresh_rejects_unknown_or_impossible_state_without_local_changes() {
         }
     });
 }
+
+fn reject_cursors(mode: &str, message: &str) {
+    use punch_core::github::RealGh;
+    let state = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+    std::fs::write(state.join("cursor-mode"), mode).unwrap();
+    let error = RealGh.linked("owner/repo", 1).unwrap_err();
+    assert_eq!(error.code, "gh-failed");
+    assert!(error.message.contains(message), "{error:?}");
+}
+#[test]
+fn pagination_rejects_repeated_cursor() {
+    isolated(|| reject_cursors("repeat", "repeated pagination cursor"));
+}
+#[test]
+fn pagination_rejects_cyclic_cursor() {
+    isolated(|| reject_cursors("cycle", "repeated pagination cursor"));
+}
+#[test]
+fn pagination_caps_unique_pages() {
+    isolated(|| reject_cursors("unique", "pagination page limit"));
+}

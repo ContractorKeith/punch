@@ -78,7 +78,18 @@ impl RealGh {
         );
         let mut cursor: Option<String> = None;
         let mut nodes = vec![];
+        let mut seen = BTreeSet::new();
+        let mut pages = 0;
         loop {
+            // Bound even walks that continually return fresh cursors (10,000 nodes).
+            if pages >= 100 {
+                return Err(PunchError::refusal(
+                    GH_FAILED,
+                    repo,
+                    "pagination page limit exceeded",
+                ));
+            }
+            pages += 1;
             let owner = format!("owner={owner}");
             let name = format!("name={name}");
             let number = format!("number={number}");
@@ -120,7 +131,7 @@ impl RealGh {
                 .as_str()
                 .ok_or_else(|| PunchError::refusal(GH_FAILED, repo, "missing pagination cursor"))?
                 .to_owned();
-            if cursor.as_ref() == Some(&next) {
+            if !seen.insert(next.clone()) {
                 return Err(PunchError::refusal(
                     GH_FAILED,
                     repo,
