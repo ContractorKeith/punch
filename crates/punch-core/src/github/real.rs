@@ -276,43 +276,6 @@ impl Gh for RealGh {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn inherited_gh_output_pipes_obey_timeout() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut command = Command::new("sh");
-        command
-            .env("PUNCH_STATE_DIR", dir.path())
-            .args(["-c", "sleep 0.4 &"]);
-        let start = std::time::Instant::now();
-        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
-        assert_eq!(error.code, GH_FAILED);
-        assert!(error.message.contains("timeout"));
-        assert!(start.elapsed() < std::time::Duration::from_millis(300));
-    }
-    #[test]
-    fn hung_gh_is_killed_at_timeout() {
-        let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("survived");
-        let mut command = Command::new("sh");
-        command.env("PUNCH_STATE_DIR", dir.path()).args([
-            "-c",
-            "sleep 0.4; touch \"$1\"",
-            "gh",
-            marker.to_str().unwrap(),
-        ]);
-        let start = std::time::Instant::now();
-        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
-        assert_eq!(error.code, GH_FAILED);
-        assert!(error.message.contains("timeout"));
-        assert!(start.elapsed() < std::time::Duration::from_millis(300));
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        assert!(!marker.exists(), "the timed out gh survived");
-    }
-}
-
 // Drain both pipes while polling: large gh responses must not block on pipe capacity.
 fn run_command(
     mut command: Command,
@@ -381,4 +344,42 @@ fn run_command(
         stdout: collect(stdout)?,
         stderr: collect(stderr)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    #[test]
+    fn inherited_gh_output_pipes_obey_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .env("PUNCH_STATE_DIR", dir.path())
+            .args(["-c", "sleep 0.4 &"]);
+        let start = std::time::Instant::now();
+        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.code, GH_FAILED);
+        assert!(error.message.contains("timeout"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(300));
+    }
+    #[test]
+    fn hung_gh_is_killed_at_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("survived");
+        let mut command = Command::new("sh");
+        command.env("PUNCH_STATE_DIR", dir.path()).args([
+            "-c",
+            "sleep 0.4; touch \"$1\"",
+            "gh",
+            marker.to_str().unwrap(),
+        ]);
+        let start = std::time::Instant::now();
+        let error = run_command(command, std::time::Duration::from_millis(50)).unwrap_err();
+        assert_eq!(error.code, GH_FAILED);
+        assert!(error.message.contains("timeout"));
+        assert!(start.elapsed() < std::time::Duration::from_millis(300));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(!marker.exists(), "the timed out gh survived");
+    }
 }
