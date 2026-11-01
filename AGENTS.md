@@ -8,8 +8,10 @@ binary that shows every project's issues, PRs, and local tasks on one board,
 lets agents claim and update work with `--json`, and keeps Basecamp in step.
 
 ## Status
-Skeleton. v1 is being built in stacked phase PRs; the binding design is
-`docs/features/v1/SPEC.md`. Last touched 2026-11-01.
+v1 milestones M1–M5 merged to main 2026-11-01 (store and CLI, TUI board,
+GitHub sync and claim, MCP server, Basecamp mirror), after two skeptic rounds
+and a fix verification on Linux and macOS (issues #12–#58, all closed). Next:
+M6 release and binaries (#11). Binding design: `docs/features/v1/SPEC.md`.
 
 ## Commands
 ```bash
