@@ -164,6 +164,10 @@ fn isolated(f: impl FnOnce()) {
         r#"#!/bin/sh
 printf '%s\n' "$@" >> "$PUNCH_STATE_DIR/calls"
 printf 'END\n' >> "$PUNCH_STATE_DIR/calls"
+if [ -f "$PUNCH_STATE_DIR/diagnostic" ]; then
+    cat "$PUNCH_STATE_DIR/diagnostic" >&2
+    exit 42
+fi
 if [ -f "$PUNCH_STATE_DIR/fail" ]; then
     echo 'fixture denied' >&2
     exit 1
@@ -638,5 +642,34 @@ fn hung_basecamp_commits_locally_keeps_store_available_and_times_out() {
                 .unwrap()
                 .success()
         );
+    });
+}
+
+#[test]
+fn credentials_are_redacted_before_warnings_and_storage() {
+    isolated(|| {
+        let (store, _) = setup();
+        let mut store = store.with_basecamp(Rc::new(punch_core::basecamp::RealBasecamp));
+        let root = std::path::PathBuf::from(std::env::var_os("PUNCH_STATE_DIR").unwrap());
+        for diagnostic in [
+            "Authorization: Bearer SECRET_A\nnext line",
+            "authorization: Basic SECRET_B\nnext line",
+            "request failed: Bearer SECRET_C",
+            "token=SECRET_D&access_token=SECRET_E api_key=SECRET_F",
+            "TOKEN = \"SECRET_G with spaces\"; Api-Key: SECRET_H",
+        ] {
+            std::fs::write(root.join("diagnostic"), diagnostic).unwrap();
+            let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+            // Seed a local task on the first iteration, then retry its dirty mirror.
+            if out.warnings.is_empty() {
+                add(&mut store);
+            }
+            let out = ops::sync(&mut store, &Actor::Person, &NoGh, None).unwrap();
+            let task = ops::show(&mut store, &Actor::Person, "t1").unwrap().data;
+            let error = task.basecamp_card.unwrap().last_error.unwrap();
+            assert!(!error.contains("SECRET_"), "{error}");
+            assert!(!out.warnings.join(" ").contains("SECRET_"));
+            assert!(error.contains("[REDACTED]"));
+        }
     });
 }

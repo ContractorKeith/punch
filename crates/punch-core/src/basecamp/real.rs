@@ -7,6 +7,10 @@ use std::process::{Command, Stdio};
 pub struct RealBasecamp;
 
 fn run(args: &[&str]) -> Result<Value, String> {
+    run_raw(args).map_err(|e| super::diagnostic(&e))
+}
+
+fn run_raw(args: &[&str]) -> Result<Value, String> {
     let mut command = Command::new("basecamp");
     command
         .args(args)
