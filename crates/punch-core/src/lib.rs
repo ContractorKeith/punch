@@ -1,6 +1,7 @@
 //! Shared domain operations and persistence for punch adapters.
 pub mod derive;
 pub mod error;
+pub mod github;
 pub mod model;
 pub mod ops;
 pub mod store;

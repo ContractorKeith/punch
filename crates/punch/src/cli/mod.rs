@@ -14,6 +14,18 @@ pub struct Cli {
 }
 #[derive(Subcommand)]
 pub enum Command {
+    Sync {
+        #[arg(short = 'p', long)]
+        project: Option<String>,
+    },
+    Claim {
+        reference: String,
+        #[arg(long = "slot")]
+        claim_slot: Option<String>,
+    },
+    Unclaim {
+        reference: String,
+    },
     #[command(about = "List ready tasks; agents should pass --json")]
     Ready {
         #[arg(short = 'p', long)]
@@ -157,6 +169,36 @@ pub fn execute(cli: &Cli) -> Result<Reply, PunchError> {
         .as_ref()
         .ok_or_else(|| PunchError::usage("missing command"))?
     {
+        Command::Sync { project } => {
+            let out = ops::sync(
+                &mut store,
+                &actor,
+                &punch_core::github::RealGh,
+                project.as_deref(),
+            )?;
+            let failed = out.data.iter().any(|r| r.status == "failed");
+            let mut reply = present(out)?;
+            if failed {
+                reply.exit_code = 3;
+            }
+            Ok(reply)
+        }
+        Command::Claim {
+            reference,
+            claim_slot,
+        } => present(ops::claim(
+            &mut store,
+            &actor,
+            &punch_core::github::RealGh,
+            reference,
+            claim_slot.as_deref(),
+        )?),
+        Command::Unclaim { reference } => present(ops::unclaim(
+            &mut store,
+            &actor,
+            &punch_core::github::RealGh,
+            reference,
+        )?),
         Command::Move { reference, column } => {
             present(ops::move_task(&mut store, &actor, reference, *column)?)
         }
@@ -286,6 +328,20 @@ pub fn print_text(data: &serde_json::Value) {
             print!("existing: ");
         }
         print_text(task);
+    } else if data.get("cards").is_some() {
+        println!(
+            "{}: {} ({} cards)",
+            data["project"].as_str().unwrap_or(""),
+            data["status"].as_str().unwrap_or(""),
+            data["cards"]
+        );
+        for r in data["refusals"].as_array().into_iter().flatten() {
+            println!(
+                "  {}: {}",
+                r["code"].as_str().unwrap_or(""),
+                r["message"].as_str().unwrap_or("")
+            );
+        }
     } else if data["status"] == "failed" {
         for r in data["refusals"].as_array().into_iter().flatten() {
             println!(

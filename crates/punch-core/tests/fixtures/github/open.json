@@ -1,0 +1,4 @@
+[
+  {"kind":"issue","number":1,"title":"Unassigned issue","state":"OPEN","assignees":[],"url":"https://github.com/owner/repo/issues/1","updatedAt":"2026-11-01T00:00:00Z"},
+  {"kind":"pr","number":2,"title":"Ready for review","state":"OPEN","assignees":[],"isDraft":false,"reviewDecision":"REVIEW_REQUIRED","url":"https://github.com/owner/repo/pull/2","updatedAt":"2026-11-01T00:00:00Z"}
+]

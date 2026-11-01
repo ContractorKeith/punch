@@ -541,3 +541,91 @@ fn local_assignee_identity_and_archive_control_add_idempotence() {
         false
     );
 }
+
+#[test]
+fn claim_unclaim_and_sync_are_available_with_json_envelopes() {
+    let dir = setup();
+    json(&dir, &["add", "local", "-p", "demo"]);
+    let claimed = json(&dir, &["--as", "worker", "claim", "t1", "--slot", "slot-a"]);
+    assert_eq!(claimed["data"]["slot"], "slot-a");
+    assert_eq!(claimed["data"]["assignee"], "worker");
+    assert_eq!(
+        json(&dir, &["unclaim", "t1"])["data"]["slot"],
+        serde_json::Value::Null
+    );
+    assert_eq!(json(&dir, &["sync"])["data"], serde_json::json!([]));
+    refusal(&dir, &["sync", "-p", "missing"], "unknown-project");
+    refusal(&dir, &["claim", "t999"], "unknown-task");
+}
+
+#[test]
+fn github_cli_reports_partial_sync_and_claim_failures_without_local_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = setup();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let script = bin.join("gh");
+    std::fs::write(
+        &script,
+        include_str!("../../punch-core/tests/fixtures/github/gh"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let paths = std::env::join_paths(paths).unwrap();
+    let github_run = |args: &[&str], failure: &str| {
+        let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("punch"));
+        cmd.env("PUNCH_STATE_DIR", dir.path())
+            .env_remove("PUNCH_AGENT")
+            .env("PATH", &paths)
+            .env("PUNCH_GH_FAILURE", failure)
+            .env(
+                "PUNCH_GH_FIXTURES",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../punch-core/tests/fixtures/github"
+                ),
+            )
+            .arg("--json")
+            .args(args)
+            .assert()
+    };
+    json(
+        &dir,
+        &[
+            "project", "add", "cli", "--github", "cli/cli", "--scope", "all",
+        ],
+    );
+    json(&dir, &["project", "add", "bad", "--github", "bad/repo"]);
+    let out = github_run(&["sync"], "").code(3).get_output().clone();
+    assert!(out.stderr.is_empty());
+    let out: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out["ok"], true);
+    assert_eq!(out["changed"], true);
+    assert_eq!(out["data"][0]["status"], "failed");
+    assert_eq!(out["data"][0]["refusals"][0]["code"], "gh-failed");
+    assert_eq!(out["data"][1]["status"], "synced");
+    let before = json(&dir, &["show", "cli#14895"])["data"].clone();
+    assert_eq!(before["column"], "review");
+    assert_eq!(json(&dir, &["list"])["data"][0]["column"], "review");
+    assert_eq!(json(&dir, &["ready"])["data"], serde_json::json!([]));
+    for (failure, code) in [
+        ("offline", "offline"),
+        ("denied", "gh-failed"),
+        ("malformed", "gh-failed"),
+        ("shape", "gh-failed"),
+    ] {
+        for verb in ["claim", "unclaim"] {
+            let out = github_run(&[verb, "cli#14895"], failure)
+                .code(1)
+                .get_output()
+                .clone();
+            assert!(out.stderr.is_empty());
+            let out: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(out["ok"], false);
+            assert_eq!(out["refusals"][0]["code"], code);
+            assert_eq!(json(&dir, &["show", "cli#14895"])["data"], before);
+        }
+    }
+}

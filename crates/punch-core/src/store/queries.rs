@@ -139,3 +139,42 @@ impl<'a> Repository<'a> {
         Ok(())
     }
 }
+
+impl Repository<'_> {
+    pub(crate) fn upsert_github(
+        &self,
+        project: &Project,
+        item: &crate::github::Item,
+        cache: &GhCache,
+        now: &str,
+    ) -> Result<bool, PunchError> {
+        let tasks = self.tasks()?;
+        let assignee = cache.assignees.first().cloned();
+        let id = if let Some(old) = tasks.iter().find(|t| {
+            t.project_id == project.id && t.kind == item.kind && t.gh_number == Some(item.number)
+        }) {
+            let mut task = old.clone();
+            task.title = item.title.clone();
+            task.assignee = assignee;
+            task.assignee_kind = task.assignee.as_ref().map(|_| AssigneeKind::Person);
+            if task == *old && old.gh_cache.as_ref() == Some(cache) {
+                return Ok(false);
+            }
+            task.revision += 1;
+            task.updated_at = now.into();
+            self.save_task(&task)?;
+            task.id
+        } else {
+            let position = tasks
+                .iter()
+                .filter(|t| t.project_id == project.id)
+                .map(|t| t.position)
+                .fold(0.0, f64::max)
+                + 1.0;
+            self.db.execute("INSERT INTO tasks(project_id,kind,gh_number,title,assignee,assignee_kind,position,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)", params![project.id,item.kind.to_string(),item.number,item.title,assignee,assignee.as_ref().map(|_|"person"),position,now])?;
+            self.db.last_insert_rowid()
+        };
+        self.db.execute("INSERT OR REPLACE INTO gh_cache(task_id,state,assignees,is_draft,review_decision,linked_pr_number,linked_pr_state,linked_pr_draft,linked_pr_review,url,fetched_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![id,cache.state,serde_json::to_string(&cache.assignees).map_err(PunchError::storage)?,cache.is_draft,cache.review_decision,cache.linked_pr_number,cache.linked_pr_state,cache.linked_pr_draft,cache.linked_pr_review,cache.url,cache.fetched_at])?;
+        Ok(true)
+    }
+}

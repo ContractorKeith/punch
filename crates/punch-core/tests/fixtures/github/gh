@@ -1,0 +1,54 @@
+#!/bin/sh
+# No network: all gh calls in this subprocess terminate here.
+printf '%s\n' "$*" >> "$PUNCH_STATE_DIR/gh-calls"
+case "${PUNCH_GH_FAILURE:-}" in
+  offline) printf '%s\n' 'network connection failed: fixture stderr' >&2; exit 1 ;;
+  denied) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;
+  shape)
+    case "$*" in
+      *view*) printf '%s\n' '[]'; exit 0 ;;
+    esac ;;
+  malformed)
+    case "$*" in
+      *view*) printf '%s\n' 'invalid JSON from gh'; exit 0 ;;
+    esac ;;
+esac
+case "$*" in
+  *bad/repo*) printf '%s\n' 'HTTP 403: fixture permission denied' >&2; exit 1 ;;
+esac
+case "$*" in
+  *'issue edit'*)
+    case "$*" in
+      *--add-assignee*) touch "$PUNCH_STATE_DIR/claimed" ;;
+      *--remove-assignee*) rm -f "$PUNCH_STATE_DIR/claimed" ;;
+    esac
+    exit 0 ;;
+  *'issue list'*--assignee*) printf '%s\n' '[]' ;;
+  *'issue list'*) cat "$PUNCH_GH_FIXTURES/recorded-issues.json" ;;
+  *'pr list'*) cat "$PUNCH_GH_FIXTURES/recorded-prs.json" ;;
+  *'issue view'*)
+    if test -f "$PUNCH_STATE_DIR/claimed"; then
+      printf '%s\n' '{"number":14895,"title":"claimed issue","state":"OPEN","assignees":[{"login":"keith"}],"updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/issues/14895"}'
+    else
+      printf '%s\n' '{"number":14895,"title":"unclaimed issue","state":"OPEN","assignees":[],"updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/issues/14895"}'
+    fi ;;
+  *'pr view 900 '*)
+    printf '%s\n' '{"number":900,"title":"cross-repo closing PR","state":"OPEN","assignees":[],"isDraft":false,"reviewDecision":"REVIEW_REQUIRED","updatedAt":"2026-11-02T00:00:00Z","url":"https://github.com/other/repo/pull/900"}' ;;
+  *'pr view'*)
+    printf '%s\n' '{"number":14846,"title":"linked PR","state":"OPEN","assignees":[],"isDraft":false,"reviewDecision":"REVIEW_REQUIRED","updatedAt":"2026-11-01T00:00:00Z","url":"https://github.com/cli/cli/pull/14846"}' ;;
+  *'api graphql'*'viewer { login }'*)
+    if test -f "$PUNCH_STATE_DIR/viewer-is-author"; then
+      printf '%s\n' '{"data":{"viewer":{"login":"tidy-dev"}}}'
+    else
+      printf '%s\n' '{"data":{"viewer":{"login":"different-user"}}}'
+    fi ;;
+  *'api graphql'*closingIssuesReferences*cursor=next*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":14895,"repository":{"nameWithOwner":"cli/cli"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' ;;
+  *'api graphql'*closingIssuesReferences*)
+    printf '%s\n' '{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":14895,"repository":{"nameWithOwner":"unrelated/repo"}}],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}}' ;;
+  *'api graphql'*timelineItems*cursor=next*)
+    printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[{"source":{"number":14846,"repository":{"nameWithOwner":"cli/cli"}}},{"source":{"number":900,"repository":{"nameWithOwner":"other/repo"}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' ;;
+  *'api graphql'*timelineItems*)
+    printf '%s\n' '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}}' ;;
+  *) printf 'unexpected fake gh arguments: %s\n' "$*" >&2; exit 1 ;;
+esac
