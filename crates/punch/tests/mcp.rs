@@ -931,3 +931,58 @@ fn tool_result_limit_counts_both_serialized_envelopes_and_recovers() {
         assert_eq!(replies[3]["result"], json!({}));
     }
 }
+
+#[test]
+fn oversized_note_returns_success_receipt_and_is_stored_once() {
+    let dir = TempDir::new().unwrap();
+    command(&dir)
+        .args(["project", "add", "demo"])
+        .assert()
+        .success();
+    let plan = dir.path().join("plan.json");
+    let notes = "x".repeat(2 * 1024 * 1024);
+    std::fs::write(
+        &plan,
+        json!([{"project":"demo","title":"large","notes":notes}]).to_string(),
+    )
+    .unwrap();
+    command(&dir)
+        .args(["add", "--file", plan.to_str().unwrap()])
+        .assert()
+        .success();
+    let replies = session(
+        &dir,
+        &[
+            initialize(),
+            call(
+                2,
+                "note",
+                json!({"reference":"t1","text":"unique appended note"}),
+            ),
+            call(3, "show", json!({"reference":"t1"})),
+        ],
+    );
+    assert_eq!(replies[1]["result"]["isError"], false);
+    let receipt = envelope(&replies[1]);
+    assert_eq!(
+        receipt,
+        json!({
+            "ok":true,"changed":true,"data":{"ref":"t1","revision":2},
+            "warnings":["result-truncated: result exceeded 4 MiB; use show to read it"]
+        })
+    );
+    assert!(replies[1]["result"].to_string().len() < 1024);
+    assert_eq!(replies[2]["result"]["isError"], true);
+    let output = command(&dir)
+        .args(["show", "t1", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stored: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(stored["data"]["revision"], 2);
+    let stored_notes = stored["data"]["notes"].as_str().unwrap();
+    assert!(stored_notes.starts_with(&notes));
+    assert_eq!(stored_notes.matches("unique appended note").count(), 1);
+}

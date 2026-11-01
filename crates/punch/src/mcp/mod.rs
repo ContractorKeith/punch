@@ -38,6 +38,32 @@ fn wire_value(raw: &RawValue, depth: usize) -> Result<Value, serde_json::Error> 
 fn error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
 }
+// Keep committed writes identifiable without echoing large task fields or diagnostics.
+fn receipt(data: &Value) -> Value {
+    if let Some(items) = data.as_array() {
+        return Value::Array(items.iter().map(receipt).collect());
+    }
+    if let Some(task) = data.get("task") {
+        let mut result = json!({"task":receipt(task)});
+        for key in ["existing", "status"] {
+            if let Some(value) = data.get(key) {
+                result[key] = value.clone();
+            }
+        }
+        return result;
+    }
+    if let (Some(id), Some(revision)) = (data["id"].as_i64(), data["revision"].as_i64()) {
+        return json!({"ref":format!("t{id}"),"revision":revision});
+    }
+    if let Some(id) = data.get("id") {
+        return json!({"id":id});
+    }
+    // Sync identifies its per-project outcomes by slug rather than database ID.
+    if let Some(project) = data.get("project") {
+        return json!({"project":project,"status":data["status"]});
+    }
+    Value::Null
+}
 fn tool_result(result: Result<crate::cli::Reply, PunchError>) -> Value {
     let (value, failed) = match result {
         Ok(reply) => (reply.value, reply.exit_code != 0),
@@ -46,6 +72,15 @@ fn tool_result(result: Result<crate::cli::Reply, PunchError>) -> Value {
     let response = json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":failed});
     // Count both envelopes and JSON escaping, rather than just the domain data.
     if response.to_string().len() > MAX_TOOL_RESULT_BYTES {
+        if value["changed"] == true {
+            return tool_result(Ok(crate::cli::Reply {
+                value: json!({
+                    "ok":true,"changed":true,"data":receipt(&value["data"]),
+                    "warnings":["result-truncated: result exceeded 4 MiB; use show to read it"]
+                }),
+                exit_code: 0,
+            }));
+        }
         return tool_result(Err(PunchError::usage(
             "Tool result exceeded 4 MiB; narrow the request with a project filter, a limit, or show a single task",
         )));

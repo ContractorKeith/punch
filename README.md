@@ -115,7 +115,10 @@ regular files; devices, FIFOs, and stdin aliases are refused before opening.
 Request payloads (excluding LF or CRLF) and plan files are capped at 1 MiB.
 Oversized lines return Invalid Request; oversized plans return `invalid-input`.
 Serialized tool results, including both text and structured content and JSON
-escaping, are capped at 4 MiB. Larger results return an `isError: true`
+escaping, are capped at 4 MiB. A committed write (`changed: true`) returns a
+small successful identity receipt (task ref and revision for task operations)
+with `result-truncated: result exceeded 4 MiB; use show to read it`.
+Larger read results return an `isError: true`
 `invalid-input` refusal: narrow the request with a project filter, a limit,
 or show a single task. The server continues with the next request. Basecamp
 tools arrive in phase 5.
