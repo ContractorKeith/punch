@@ -38,6 +38,66 @@ class ReleaseTests(unittest.TestCase):
             text=True,
         )
 
+    def write_archive(self, path, binary=b"fixture", docs=True):
+        members = {"punch": binary}
+        if docs:
+            members.update({"LICENSE": b"license", "README.md": b"readme"})
+        with tarfile.open(path, "w:gz") as archive:
+            for name, data in members.items():
+                member = tarfile.TarInfo(name)
+                member.mode = 0o755 if name == "punch" else 0o644
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+
+    def test_package_rejects_symlink_before_creating_output(self):
+        binary = self.work / "real"
+        binary.write_bytes(b"fixture")
+        binary.chmod(0o755)
+        link = self.work / "link"
+        link.symlink_to(binary)
+        output = self.work / "output"
+        result = self.run_cli("package", "--target", "x86_64-unknown-linux-musl",
+                              "--binary", str(link), "--out", str(output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("regular", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_smoke_missing_binary_is_concise(self):
+        archive = self.work / "empty.tar.gz"
+        with tarfile.open(archive, "w:gz"):
+            pass
+        result = self.run_cli("smoke", "--archive", str(archive))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(archive), result.stderr)
+        self.assertIn("missing punch", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_assemble_rejects_corrupt_or_incomplete_archives(self):
+        for target in ("x86_64-unknown-linux-musl", "aarch64-apple-darwin",
+                       "x86_64-apple-darwin"):
+            self.write_archive(self.work / f"punch-v0.1.0-{target}.tar.gz")
+        archive = self.work / "punch-v0.1.0-x86_64-apple-darwin.tar.gz"
+        for corrupt in (True, False):
+            if corrupt:
+                archive.write_bytes(b"bad\n")
+            else:
+                self.write_archive(archive, docs=False)
+            result = self.run_cli("assemble", "--dir", str(self.work))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.work / "SHA256SUMS").exists())
+            self.assertFalse((self.work / "punch.rb").exists())
+
+    def test_smoke_rejects_invalid_json_and_wrong_envelopes(self):
+        for value in ("not-json", '{"ok":true}',
+                      '{"ok":true,"changed":false,"data":[1],"warnings":[]}'):
+            binary = ("#!/bin/sh\nif [ \"$1\" = --help ]; then exit 0; fi\n"
+                      "printf '%s\\n' '" + value + "'\n").encode()
+            archive = self.work / "bad-response.tar.gz"
+            self.write_archive(archive, binary)
+            result = self.run_cli("smoke", "--archive", str(archive))
+            self.assertNotEqual(result.returncode, 0, value)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_tag_must_exactly_match_manifest_version(self):
         result = self.run_cli("validate", "--tag", "v0.1.0")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -75,7 +135,7 @@ class ReleaseTests(unittest.TestCase):
         ]
         for name in names:
             # Distinct test bytes, never published as release artifacts.
-            (self.work / name).write_bytes(name.encode())
+            self.write_archive(self.work / name, name.encode())
         result = self.run_cli("assemble", "--dir", str(self.work))
         self.assertEqual(result.returncode, 0, result.stderr)
         formula = (self.work / "punch.rb").read_text()

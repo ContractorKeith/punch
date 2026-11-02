@@ -34,8 +34,9 @@ def archive_name(release_version, target):
 
 
 def package(args, release_version):
-    if not args.binary.is_file() or not args.binary.stat().st_mode & 0o111:
-        raise ValueError("binary must be an executable file")
+    if (args.binary.is_symlink() or not args.binary.is_file()
+            or not args.binary.stat().st_mode & 0o111):
+        raise ValueError("binary must be a regular executable file, not a symlink")
     args.out.mkdir(parents=True, exist_ok=True)
     archive = args.out / archive_name(release_version, args.target)
     with tarfile.open(archive, "w:gz") as output:
@@ -47,6 +48,16 @@ def package(args, release_version):
     print(archive)
 
 
+def regular_member(archive, name):
+    try:
+        member = archive.getmember(name)
+    except KeyError:
+        raise ValueError(f"{archive.name}: missing {name}") from None
+    if not member.isfile():
+        raise ValueError(f"{archive.name}: {name} must be a regular file")
+    return member
+
+
 def assemble(directory, release_version):
     hashes = {}
     for target in TARGETS:
@@ -54,6 +65,11 @@ def assemble(directory, release_version):
         archive = directory / name
         if not archive.is_file():
             raise ValueError(f"missing release archive: {name}")
+        with tarfile.open(archive) as contents:
+            for required in ("punch", "LICENSE", "README.md"):
+                member = regular_member(contents, required)
+                if required == "punch" and not member.mode & 0o111:
+                    raise ValueError(f"{archive}: punch must be executable")
         hashes[target] = hashlib.sha256(archive.read_bytes()).hexdigest()
     (directory / "SHA256SUMS").write_text("".join(
         f"{hashes[target]}  {archive_name(release_version, target)}\n"
@@ -97,9 +113,7 @@ def smoke(archive):
         binary = scratch / "punch"
         # Read just the binary, never extract arbitrary archive paths or links.
         with tarfile.open(archive) as package_file:
-            member = package_file.getmember("punch")
-            if not member.isfile():
-                raise ValueError("package punch must be a regular file")
+            member = regular_member(package_file, "punch")
             with package_file.extractfile(member) as source:
                 binary.write_bytes(source.read())
         binary.chmod(0o755)
