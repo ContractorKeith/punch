@@ -24,6 +24,7 @@ pub fn claim(
         } else {
             None
         }),
+        None,
     )
 }
 pub fn unclaim(
@@ -32,7 +33,22 @@ pub fn unclaim(
     gh: &dyn Gh,
     reference: &str,
 ) -> Result<Outcome<Task>, PunchError> {
-    set_claim(store, actor, gh, reference, false, None)
+    set_claim(store, actor, gh, reference, false, None, None)
+}
+/// Board snapshots are checked before remote writes and again before the local commit.
+/// No SQLite write lock is held while waiting for GitHub.
+pub fn claim_task(
+    store: &mut Store,
+    actor: &Actor,
+    gh: &dyn Gh,
+    snapshot: &Task,
+    claimed: bool,
+) -> Result<Outcome<Task>, PunchError> {
+    let slot = match actor {
+        Actor::Agent(slot) if claimed => Some(slot.as_str()),
+        _ => None,
+    };
+    set_claim(store, actor, gh, &snapshot.reference(), claimed, slot, Some(snapshot.revision))
 }
 fn set_claim(
     store: &mut Store,
@@ -41,8 +57,10 @@ fn set_claim(
     reference: &str,
     claimed: bool,
     slot: Option<&str>,
+    revision: Option<i64>,
 ) -> Result<Outcome<Task>, PunchError> {
     let old = store.read_transaction(|repo| Ok(resolve(&repo.tasks()?, reference)?.clone()))?;
+    check_revision(&old, revision, "card changed; reload before retrying")?;
     let fetched = if old.kind != Kind::Local {
         let project = store.read_transaction(|repo| find_project(repo, &old.project))?;
         let github = project.github_repo.as_deref().ok_or_else(|| {
@@ -67,6 +85,7 @@ fn set_claim(
         // Re-read local fields after the remote call so concurrent local edits survive.
 
         let old = resolve(&repo.tasks()?, reference)?.clone();
+        check_revision(&old, revision, "card changed during claim; GitHub may have changed; sync before retrying")?;
         let mut changed = false;
         if let Some((project, item, linked)) = &fetched {
             let timestamp = now()?;
@@ -101,4 +120,11 @@ fn set_claim(
             resolve(&repo.tasks()?, reference)?.clone(),
         ))
     })
+}
+
+fn check_revision(task: &Task, revision: Option<i64>, message: &str) -> Result<(), PunchError> {
+    if revision.is_some_and(|r| r != task.revision) {
+        return Err(PunchError::refusal(STALE, task.reference(), message));
+    }
+    Ok(())
 }

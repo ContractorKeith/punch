@@ -16,14 +16,17 @@ pub enum Mode {
     Add { project: String, title: String },
     Archive(Box<Task>),
     Detail,
+    Result,
     Help,
     Projects(usize),
     Filter(String),
 }
 pub struct Board {
+    pub pending: Option<super::actions::Pending>,
     pub mode: Mode,
     pub edit_request: Option<Task>,
     pub status: Option<(String, std::time::Instant)>,
+    pub last_result: Option<String>,
     pub quit: bool,
     pub scroll: u16,
     version: i64,
@@ -38,9 +41,11 @@ pub struct Board {
 impl Board {
     pub fn load(store: &mut Store, actor: Actor) -> Result<Self, PunchError> {
         let mut board = Self {
+            pending: None,
             mode: Mode::Board,
             edit_request: None,
             status: None,
+            last_result: None,
             quit: false,
             scroll: 0,
             version: store.data_version()?,
@@ -132,18 +137,58 @@ impl Board {
             .contains(&self.filter.to_lowercase())
     }
     pub fn flash(&mut self, error: PunchError) {
+        self.last_result = Some(format!("{}: {}", error.code, error.message));
         self.status = Some((
             format!("{}: {}", error.code, error.message),
             std::time::Instant::now(),
         ));
     }
     pub fn status_text(&self) -> Option<&str> {
+        if let Some(pending) = &self.pending {
+            return Some(&pending.label);
+        }
         self.status
             .as_ref()
             .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(5))
             .map(|(text, _)| text.as_str())
     }
+    pub fn poll_action(&mut self, store: &mut Store) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(pending) = &self.pending else {
+            return;
+        };
+        let result = match pending.result.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(PunchError::storage(
+                "board action stopped; read back before retrying",
+            )),
+        };
+        self.pending = None;
+        let mut text = match result {
+            Ok(out) => std::iter::once(out.data)
+                .chain(out.warnings)
+                .collect::<Vec<_>>()
+                .join("; "),
+            Err(error) => format!("{}: {}", error.code, error.message),
+        };
+        // Reload even on failure: a remote write or a subset of sync may have succeeded.
+        if let Err(error) = self.reload(store) {
+            text.push_str(&format!("; reload: {}: {}", error.code, error.message));
+        }
+        self.last_result = Some(text.replace("; ", "\n"));
+        self.status = Some((text, std::time::Instant::now()));
+    }
+    fn start_action(&mut self, action: super::actions::Action) {
+        match action.start(self.actor.clone()) {
+            Ok(pending) => self.pending = Some(pending),
+            Err(error) => self.flash(error),
+        }
+    }
     pub(super) fn complete_action<T>(&mut self, store: &mut Store, out: Outcome<T>) -> Option<T> {
+        if !out.warnings.is_empty() {
+            self.last_result = Some(out.warnings.join("\n"));
+        }
         self.status = (!out.warnings.is_empty())
             .then(|| (out.warnings.join("; "), std::time::Instant::now()));
         if let Err(error) = self.reload(store) {
@@ -343,7 +388,7 @@ impl Board {
                 self.mode = Mode::Filter(text);
                 return;
             }
-            Mode::Detail | Mode::Help => {
+            Mode::Detail | Mode::Help | Mode::Result => {
                 match key {
                     KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
                         self.mode = Mode::Board
@@ -358,7 +403,32 @@ impl Board {
             }
             Mode::Board => {}
         }
+        // Keep navigation and quit available while preventing overlapping writes.
+        if self.pending.is_some()
+            && matches!(
+                key,
+                KeyCode::Char('a' | 'e' | 'P' | 'x' | 'H' | 'L' | ' ' | 'c' | 'u' | 's')
+                    | KeyCode::Backspace
+            )
+        {
+            return;
+        }
         match key {
+            KeyCode::Char('r') => {
+                self.mode = Mode::Result;
+                self.scroll = 0;
+            }
+            KeyCode::Char('c' | 'u') if event.kind != crossterm::event::KeyEventKind::Repeat => {
+                if let Some(task) = self.selected().cloned() {
+                    self.start_action(super::actions::Action::Claim {
+                        task: Box::new(task),
+                        claimed: key == KeyCode::Char('c'),
+                    });
+                }
+            }
+            KeyCode::Char('s') if event.kind != crossterm::event::KeyEventKind::Repeat => {
+                self.start_action(super::actions::Action::Sync(self.project.clone()));
+            }
             KeyCode::Char('a') => {
                 if let Some(project) = &self.project {
                     self.mode = Mode::Add {

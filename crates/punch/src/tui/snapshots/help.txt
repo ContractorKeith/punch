@@ -1,0 +1,32 @@
+punch   project: all   filter: -
+todo 3 | doing 0 | review 0┌Keys · j/k scroll, Esc close────────────────────────────────────────────────────────────┐
+┌Todo (3)──────────────┐┌In│h/l  Focus column                                                                       │──┐┌Shipped (0)───────────┐
+│> t1 p2 alpha         ││  │j/k  Focus card (scroll in detail/help)                                                 │  ││                      │
+│  Build board         ││  │H/L  Move card left/right                                                               │  ││                      │
+│                      ││  │Space/Backspace  Next/previous column                                                   │  ││                      │
+│  t2 p2 alpha         ││  │p  Choose project (including all)                                                       │  ││                      │
+│  Write docs          ││  │/  Filter title, notes, ref, project                                                    │  ││                      │
+│                      ││  │Enter  Detail pane                                                                      │  ││                      │
+│  t3 p2 beta          ││  │a  Add a local card (choose project, then title)                                        │  ││                      │
+│  Ship tool           ││  │e  Edit notes in $EDITOR                                                                │  ││                      │
+│                      ││  │P  Cycle priority 0-3                                                                   │  ││                      │
+│                      ││  │x  Archive (confirm y)                                                                  │  ││                      │
+│                      ││  │c  Claim selected card                                                                  │  ││                      │
+│                      ││  │u  Unclaim selected card                                                                │  ││                      │
+│                      ││  │s  Sync project filter (all = all projects)                                             │  ││                      │
+│                      ││  │r  Last action result (persistent, j/k scroll)                                          │  ││                      │
+│                      ││  │?  Help                                                                                 │  ││                      │
+│                      ││  │q  Quit                                                                                 │  ││                      │
+│                      ││  │Esc  Close/cancel                                                                       │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │GitHub columns are derived. Agents cannot finish or archive.                            │  ││                      │
+│                      ││  │Claim/sync run in the background; writes are disabled until completion.                 │  ││                      │
+│                      ││  │The board reloads external changes once a second.                                       │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+│                      ││  │                                                                                        │  ││                      │
+└──────────────────────┘└──└────────────────────────────────────────────────────────────────────────────────────────┘──┘└──────────────────────┘
+c claim  u unclaim  s sync  r result  ? help  q quit  h/l column  j/k card  Enter detail
