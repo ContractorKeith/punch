@@ -1,0 +1,157 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version to validate (empty uses Cargo.toml); never publishes'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: '1.98.1'
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate version and tag
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ "$EVENT" = push ]; then tag="$REF_NAME"; fi
+          args=()
+          if [ -n "$tag" ]; then args=(--tag "$tag"); fi
+          version=$(python3 packaging/release.py validate "${args[@]}")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test release helpers
+        run: bash packaging/check.sh python3 -m unittest discover -s packaging -v
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+      - run: bash packaging/check.sh cargo +"$RUST_VERSION" fmt --all --check
+      - run: bash packaging/check.sh cargo +"$RUST_VERSION" clippy --locked --workspace --all-targets -- -D warnings
+      - run: bash packaging/check.sh cargo +"$RUST_VERSION" test --locked --workspace
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install musl compiler
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Install Rust target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --target "$TARGET"
+      - name: Test and build target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          bash packaging/check.sh cargo +"$RUST_VERSION" test --locked --workspace --target "$TARGET"
+          bash packaging/check.sh cargo +"$RUST_VERSION" build --locked --release --bin punch --target "$TARGET"
+      - name: Package and smoke test extracted binary
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 packaging/release.py package --target "$TARGET" --binary "$CARGO_TARGET_DIR/$TARGET/release/punch" --out dist
+          python3 packaging/release.py smoke --archive "dist/punch-v$VERSION-$TARGET.tar.gz"
+      - name: Check Linux binary has no dynamic interpreter
+        if: runner.os == 'Linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          readelf --program-headers "$CARGO_TARGET_DIR/$TARGET/release/punch" > program-headers.txt
+          if grep -q INTERP program-headers.txt; then
+            echo 'Expected a static musl binary' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  assemble:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums and formula from final archives
+        run: |
+          python3 packaging/release.py assemble --dir dist
+          (cd dist && sha256sum --check SHA256SUMS)
+          ruby -c dist/punch.rb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [validate, assemble]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          (cd dist && sha256sum --check SHA256SUMS)
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS dist/punch.rb --verify-tag --title "punch $TAG" --notes-file CHANGELOG.md
