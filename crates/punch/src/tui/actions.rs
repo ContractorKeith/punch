@@ -9,6 +9,17 @@ pub enum Action {
 pub struct Pending {
     pub label: String,
     pub result: Receiver<Result<Outcome<String>, PunchError>>,
+    cancellation: ops::Cancellation,
+}
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        // Network children are killed synchronously. Allow a short bounded reap/ack,
+        // never a network timeout or a SQLite busy wait on the terminal thread.
+        let _ = self
+            .result
+            .recv_timeout(std::time::Duration::from_millis(250));
+    }
 }
 impl Action {
     pub fn start(self, actor: Actor) -> Result<Pending, PunchError> {
@@ -23,13 +34,20 @@ impl Action {
             }
         };
         let (send, result) = mpsc::channel();
+        let cancellation = ops::Cancellation::default();
+        let worker_cancellation = cancellation.clone();
         std::thread::Builder::new()
             .name("board-action".into())
             .spawn(move || {
-                let out = Store::open().and_then(|mut store| self.run(&mut store, &actor));
+                let out = worker_cancellation
+                    .run(|| Store::open().and_then(|mut store| self.run(&mut store, &actor)));
                 let _ = send.send(out);
             })?;
-        Ok(Pending { label, result })
+        Ok(Pending {
+            label,
+            result,
+            cancellation,
+        })
     }
     fn run(self, store: &mut Store, actor: &Actor) -> Result<Outcome<String>, PunchError> {
         match self {

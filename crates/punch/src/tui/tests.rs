@@ -140,6 +140,10 @@ case "$*" in
 esac
 case "$1 $2" in
   'issue edit')
+    echo $$ > "$PUNCH_STATE_DIR/gh.pid"
+    if test -e "$PUNCH_STATE_DIR/spawn-descendant"; then
+      sh -c 'echo $$ > "$PUNCH_STATE_DIR/descendant.pid"; while test -e "$PUNCH_STATE_DIR/block"; do sleep 0.01; done; touch "$PUNCH_STATE_DIR/descendant-side-effect"' &
+    fi
     if test -e "$PUNCH_STATE_DIR/fail"; then echo offline-test >&2; exit 1; fi
     touch "$PUNCH_STATE_DIR/entered"
     while test -e "$PUNCH_STATE_DIR/block"; do sleep 0.01; done
@@ -196,6 +200,116 @@ fn github_project(store: &mut Store, slug: &str, github: &str) {
 }
 
 #[test]
+fn dropping_board_stops_assignment_and_descendants_before_they_can_write() {
+    isolated(|dir| {
+        fake_tools(dir);
+        let mut store = Store::open().unwrap();
+        github_project(&mut store, "alpha", "fake/alpha");
+        ops::sync(
+            &mut store,
+            &Actor::Person,
+            &punch_core::github::RealGh,
+            None,
+        )
+        .unwrap();
+        for exit in ["q", "ctrl-c", "error", "unwind"] {
+            for file in [
+                "entered",
+                "gh.pid",
+                "descendant.pid",
+                "assignees",
+                "descendant-side-effect",
+            ] {
+                let _ = std::fs::remove_file(dir.join(file));
+            }
+            std::fs::write(dir.join("block"), "").unwrap();
+            std::fs::write(dir.join("spawn-descendant"), "").unwrap();
+            let mut board = Board::load(&mut store, Actor::Person).unwrap();
+            board.key(Char('c').into(), &mut store);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !dir.join("descendant.pid").exists() {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let pid = std::fs::read_to_string(dir.join("gh.pid"))
+                .unwrap()
+                .trim()
+                .to_owned();
+            let start = std::time::Instant::now();
+            match exit {
+                "q" => {
+                    board.key(Char('q').into(), &mut store);
+                    assert!(board.quit);
+                    drop(board);
+                }
+                "ctrl-c" => {
+                    board.key(
+                        crossterm::event::KeyEvent::new(
+                            Char('c'),
+                            crossterm::event::KeyModifiers::CONTROL,
+                        ),
+                        &mut store,
+                    );
+                    assert!(board.quit);
+                    drop(board);
+                }
+                "error" => {
+                    fn fail(_board: Board) -> Result<(), &'static str> {
+                        Err("terminal error")
+                    }
+                    assert!(fail(board).is_err());
+                }
+                _ => {
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                            let _board = board;
+                            panic!("terminal unwind");
+                        }))
+                        .is_err()
+                    );
+                }
+            }
+            let elapsed = start.elapsed();
+            let ps = Command::new("ps")
+                .args(["-ax", "-o", "pid=,pgid=,stat="])
+                .output()
+                .unwrap();
+            let survivors = String::from_utf8(ps.stdout)
+                .unwrap()
+                .lines()
+                .filter(|line| {
+                    let parts: Vec<_> = line.split_whitespace().collect();
+                    parts.get(1) == Some(&pid.as_str())
+                        && parts.get(2).is_some_and(|state| !state.starts_with('Z'))
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            std::fs::remove_file(dir.join("block")).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let delayed =
+                dir.join("assignees").exists() || dir.join("descendant-side-effect").exists();
+            // Also clean up the intentionally failing pre-fix run.
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", "--", &format!("-{pid}")])
+                .stderr(std::process::Stdio::null())
+                .status();
+            assert!(
+                !delayed,
+                "{exit}: cancelled assignment/descendant executed after board exit"
+            );
+            assert!(
+                survivors.is_empty(),
+                "{exit}: surviving process group: {survivors:?}"
+            );
+            assert!(
+                elapsed < std::time::Duration::from_secs(1),
+                "{exit}: shutdown took {elapsed:?}"
+            );
+        }
+    });
+}
+
+#[test]
 fn sync_uses_project_filter_and_reports_successes_alongside_failures() {
     isolated(|dir| {
         fake_tools(dir);
@@ -227,6 +341,55 @@ fn sync_uses_project_filter_and_reports_successes_alongside_failures() {
             "{status}"
         );
         assert_eq!(board.tasks.len(), 1);
+    });
+}
+
+#[test]
+fn expired_sync_diagnostics_remain_scrollable_to_later_failures_on_narrow_screens() {
+    isolated(|dir| {
+        use ratatui::{Terminal, backend::TestBackend};
+        fake_tools(dir);
+        let mut store = Store::open().unwrap();
+        for index in 0..8 {
+            github_project(
+                &mut store,
+                &format!("project{index}"),
+                &format!("fake/project{index}"),
+            );
+        }
+        github_project(&mut store, "zlast", "fake/failing");
+        let mut board = Board::load(&mut store, Actor::Person).unwrap();
+        board.key(Char('s').into(), &mut store);
+        finish_action(&mut board, &mut store);
+        board.status.as_mut().unwrap().1 =
+            std::time::Instant::now() - std::time::Duration::from_secs(6);
+        assert!(board.status_text().is_none());
+        board.key(Char('r').into(), &mut store);
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        let mut found = false;
+        for _ in 0..40 {
+            terminal
+                .draw(|frame| super::view::draw(frame, &board))
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect();
+            if text.contains("zlast: offline: network-unavailable") {
+                found = true;
+                break;
+            }
+            board.key(Char('j').into(), &mut store);
+        }
+        assert!(
+            found,
+            "later project failure is inaccessible after status expires"
+        );
+        board.key(Esc.into(), &mut store);
+        assert_eq!(board.mode, Mode::Board);
     });
 }
 
@@ -441,6 +604,7 @@ fn board_help_and_footer_discover_claim_unclaim_and_sync() {
         assert!(text.contains("c  Claim selected card"));
         assert!(text.contains("u  Unclaim selected card"));
         assert!(text.contains("s  Sync project filter (all = all projects)"));
+        assert!(text.contains("r  Last action result (persistent, j/k scroll)"));
         check_snapshot("help", text, include_str!("snapshots/help.txt"));
     });
 }
@@ -854,6 +1018,7 @@ fn ctrl_c_quits_every_mode_and_modifier_chords_do_not_type() {
             Mode::Filter("keep".into()),
             Mode::Detail,
             Mode::Help,
+            Mode::Result,
             Mode::Archive(Box::new(board.selected().unwrap().clone())),
         ];
         for mode in modes {
@@ -1084,6 +1249,10 @@ fn successful_action_shows_all_warnings_and_keeps_the_local_change() {
         assert_eq!(
             board.status_text(),
             Some("mirror unavailable; unmapped destination")
+        );
+        assert_eq!(
+            board.last_result.as_deref(),
+            Some("mirror unavailable\nunmapped destination")
         );
         let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
         terminal

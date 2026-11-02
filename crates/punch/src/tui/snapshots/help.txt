@@ -14,6 +14,7 @@ todo 3 | doing 0 | review 0┌Keys · j/k scroll, Esc close───────
 │                      ││  │c  Claim selected card                                                                  │  ││                      │
 │                      ││  │u  Unclaim selected card                                                                │  ││                      │
 │                      ││  │s  Sync project filter (all = all projects)                                             │  ││                      │
+│                      ││  │r  Last action result (persistent, j/k scroll)                                          │  ││                      │
 │                      ││  │?  Help                                                                                 │  ││                      │
 │                      ││  │q  Quit                                                                                 │  ││                      │
 │                      ││  │Esc  Close/cancel                                                                       │  ││                      │
@@ -27,6 +28,5 @@ todo 3 | doing 0 | review 0┌Keys · j/k scroll, Esc close───────
 │                      ││  │                                                                                        │  ││                      │
 │                      ││  │                                                                                        │  ││                      │
 │                      ││  │                                                                                        │  ││                      │
-│                      ││  │                                                                                        │  ││                      │
 └──────────────────────┘└──└────────────────────────────────────────────────────────────────────────────────────────┘──┘└──────────────────────┘
-c claim  u unclaim  s sync  ? help  q quit  h/l column  j/k card  Enter detail
+c claim  u unclaim  s sync  r result  ? help  q quit  h/l column  j/k card  Enter detail

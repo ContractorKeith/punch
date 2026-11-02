@@ -16,6 +16,7 @@ pub enum Mode {
     Add { project: String, title: String },
     Archive(Box<Task>),
     Detail,
+    Result,
     Help,
     Projects(usize),
     Filter(String),
@@ -25,6 +26,7 @@ pub struct Board {
     pub mode: Mode,
     pub edit_request: Option<Task>,
     pub status: Option<(String, std::time::Instant)>,
+    pub last_result: Option<String>,
     pub quit: bool,
     pub scroll: u16,
     version: i64,
@@ -43,6 +45,7 @@ impl Board {
             mode: Mode::Board,
             edit_request: None,
             status: None,
+            last_result: None,
             quit: false,
             scroll: 0,
             version: store.data_version()?,
@@ -134,6 +137,7 @@ impl Board {
             .contains(&self.filter.to_lowercase())
     }
     pub fn flash(&mut self, error: PunchError) {
+        self.last_result = Some(format!("{}: {}", error.code, error.message));
         self.status = Some((
             format!("{}: {}", error.code, error.message),
             std::time::Instant::now(),
@@ -161,21 +165,19 @@ impl Board {
             )),
         };
         self.pending = None;
+        let mut text = match result {
+            Ok(out) => std::iter::once(out.data)
+                .chain(out.warnings)
+                .collect::<Vec<_>>()
+                .join("; "),
+            Err(error) => format!("{}: {}", error.code, error.message),
+        };
         // Reload even on failure: a remote write or a subset of sync may have succeeded.
         if let Err(error) = self.reload(store) {
-            self.flash(error);
-            return;
+            text.push_str(&format!("; reload: {}: {}", error.code, error.message));
         }
-        match result {
-            Ok(out) => {
-                let mut text = out.data;
-                for warning in out.warnings {
-                    text.push_str(&format!("; {warning}"));
-                }
-                self.status = Some((text, std::time::Instant::now()));
-            }
-            Err(error) => self.flash(error),
-        }
+        self.last_result = Some(text.replace("; ", "\n"));
+        self.status = Some((text, std::time::Instant::now()));
     }
     fn start_action(&mut self, action: super::actions::Action) {
         match action.start(self.actor.clone()) {
@@ -184,6 +186,9 @@ impl Board {
         }
     }
     pub(super) fn complete_action<T>(&mut self, store: &mut Store, out: Outcome<T>) -> Option<T> {
+        if !out.warnings.is_empty() {
+            self.last_result = Some(out.warnings.join("\n"));
+        }
         self.status = (!out.warnings.is_empty())
             .then(|| (out.warnings.join("; "), std::time::Instant::now()));
         if let Err(error) = self.reload(store) {
@@ -383,7 +388,7 @@ impl Board {
                 self.mode = Mode::Filter(text);
                 return;
             }
-            Mode::Detail | Mode::Help => {
+            Mode::Detail | Mode::Help | Mode::Result => {
                 match key {
                     KeyCode::Char('q') | KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
                         self.mode = Mode::Board
@@ -409,6 +414,10 @@ impl Board {
             return;
         }
         match key {
+            KeyCode::Char('r') => {
+                self.mode = Mode::Result;
+                self.scroll = 0;
+            }
             KeyCode::Char('c' | 'u') if event.kind != crossterm::event::KeyEventKind::Repeat => {
                 if let Some(task) = self.selected().cloned() {
                     self.start_action(super::actions::Action::Claim {

@@ -15,4 +15,4 @@ todo 3 | doing 0 | review 0 | blocked 0 | done 0 | shipped 0
 │                  ││                  ││                  │
 │                  ││                  ││                  │
 └──────────────────┘└──────────────────┘└──────────────────┘
-c claim  u unclaim  s sync  ? help  q quit  h/l column  j/k
+c claim  u unclaim  s sync  r result  ? help  q quit  h/l co
