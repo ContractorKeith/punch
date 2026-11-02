@@ -8,10 +8,10 @@ binary that shows every project's issues, PRs, and local tasks on one board,
 lets agents claim and update work with `--json`, and keeps Basecamp in step.
 
 ## Status
-v1 milestones M1–M5 merged to main 2026-11-01 (store and CLI, TUI board,
-GitHub sync and claim, MCP server, Basecamp mirror), after two skeptic rounds
-and a fix verification on Linux and macOS (issues #12–#58, all closed). Next:
-M6 release and binaries (#11). Binding design: `docs/features/v1/SPEC.md`.
+v0.1.0 implementation is merged, including M6 board controls and release
+packaging. Linux and Mac Studio artifact reviews passed; archive fixes #61/#62
+verified independently. Release publication and tap validation are tracked in
+#11. Binding design: `docs/features/v1/SPEC.md`; release: `docs/releasing.md`.
 
 ## Commands
 ```bash

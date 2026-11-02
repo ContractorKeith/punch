@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-Initial v0.1.0 release preparation; no release has been published by this change.
+## 0.1.0 — 2026-11-02
 
 ### Added
 
@@ -12,3 +10,10 @@ Initial v0.1.0 release preparation; no release has been published by this change
   and a stdio MCP server for coding agents.
 - Release packaging for Linux x86_64 musl and macOS Apple Silicon and Intel,
   with SHA-256 checksums and a generated Homebrew formula.
+- Board claim/unclaim and background sync, persistent action results, and
+  bounded subprocess cancellation that preserves process-group identity.
+
+### Fixed
+
+- Release validation rejects damaged gzip streams before metadata generation
+  or executable extraction and reports concise archive diagnostics.

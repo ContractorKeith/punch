@@ -1,8 +1,8 @@
 # Releasing punch
 
-M6 packaging is integrated **after the TUI claim/sync change**. Do not tag the
-packaging branch independently. Issue [#11](https://github.com/ContractorKeith/punch/issues/11)
-tracks both pieces; this PR does not close it.
+M6 board controls and packaging are integrated on main. Issue
+[#11](https://github.com/ContractorKeith/punch/issues/11) tracks publication
+and Homebrew validation. Tag only a reviewed main commit after its final gate.
 
 ## Artifacts
 
