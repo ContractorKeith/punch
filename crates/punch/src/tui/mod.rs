@@ -1,4 +1,5 @@
 //! Interactive board adapter. All domain access goes through core operations.
+mod actions;
 mod editor;
 mod model;
 mod terminal;
@@ -16,6 +17,7 @@ pub fn run(actor: Actor) -> Result<(), PunchError> {
     let mut board = model::Board::load(&mut store, actor)?;
     let mut last_poll = Instant::now();
     while !board.quit {
+        board.poll_action(&mut store);
         terminal.draw(|frame| view::draw(frame, &board))?;
         if event::poll(Duration::from_millis(100))? {
             dispatch_event(&mut board, &mut store, event::read()?);

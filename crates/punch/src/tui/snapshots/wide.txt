@@ -15,4 +15,4 @@ todo 3 | doing 0 | review 0 | blocked 0 | done 0 | shipped 0
 │                      ││                      ││                      ││                      ││                      ││                      │
 │                      ││                      ││                      ││                      ││                      ││                      │
 └──────────────────────┘└──────────────────────┘└──────────────────────┘└──────────────────────┘└──────────────────────┘└──────────────────────┘
-h/l column  j/k card  Space move  Enter detail  ? help  q quit
+c claim  u unclaim  s sync  r result  ? help  q quit  h/l column  j/k card  Enter detail
