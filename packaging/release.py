@@ -1,6 +1,7 @@
 """Small, offline release helpers. Run from any directory with Python 3.11+."""
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zlib
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = (
@@ -58,6 +60,16 @@ def regular_member(archive, name):
     return member
 
 
+def validate_gzip(archive):
+    # Tar readers may stop at end-of-archive blocks before checking the gzip trailer.
+    try:
+        with gzip.open(archive, "rb") as stream:
+            while stream.read(1024 * 1024):
+                pass
+    except (OSError, EOFError, zlib.error) as error:
+        raise ValueError(f"{archive}: invalid gzip archive: {error}") from None
+
+
 def assemble(directory, release_version):
     hashes = {}
     for target in TARGETS:
@@ -65,6 +77,7 @@ def assemble(directory, release_version):
         archive = directory / name
         if not archive.is_file():
             raise ValueError(f"missing release archive: {name}")
+        validate_gzip(archive)
         with tarfile.open(archive) as contents:
             for required in ("punch", "LICENSE", "README.md"):
                 member = regular_member(contents, required)
@@ -108,6 +121,7 @@ def assemble(directory, release_version):
 
 
 def smoke(archive):
+    validate_gzip(archive)
     with tempfile.TemporaryDirectory(prefix="punch-package-") as temporary:
         scratch = Path(temporary)
         binary = scratch / "punch"

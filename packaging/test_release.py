@@ -98,6 +98,35 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, value)
             self.assertNotIn("Traceback", result.stderr)
 
+    def test_assemble_checks_gzip_trailer_before_writing_metadata(self):
+        for target in ("x86_64-unknown-linux-musl", "aarch64-apple-darwin",
+                       "x86_64-apple-darwin"):
+            self.write_archive(self.work / f"punch-v0.1.0-{target}.tar.gz")
+        archive = self.work / "punch-v0.1.0-x86_64-unknown-linux-musl.tar.gz"
+        original = archive.read_bytes()
+        for damaged in (original[:-8], original[:-8] + b"\x00" * 8):
+            archive.write_bytes(damaged)
+            result = self.run_cli("assemble", "--dir", str(self.work))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(str(archive), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertFalse((self.work / "SHA256SUMS").exists())
+            self.assertFalse((self.work / "punch.rb").exists())
+
+    def test_smoke_rejects_truncated_gzip_without_traceback_or_execution(self):
+        marker = self.work / "executed"
+        binary = f'#!/bin/sh\ntouch "{marker}"\n'.encode()
+        archive = self.work / "truncated.tar.gz"
+        self.write_archive(archive, binary)
+        original = archive.read_bytes()
+        for damaged in (original[:100], original[:-8]):
+            archive.write_bytes(damaged)
+            result = self.run_cli("smoke", "--archive", str(archive))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(str(archive), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertFalse(marker.exists())
+
     def test_tag_must_exactly_match_manifest_version(self):
         result = self.run_cli("validate", "--tag", "v0.1.0")
         self.assertEqual(result.returncode, 0, result.stderr)
