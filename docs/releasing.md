@@ -1,8 +1,14 @@
 # Releasing punch
 
 M6 board controls and packaging are integrated on main. Issue
-[#11](https://github.com/ContractorKeith/punch/issues/11) tracks publication
-and Homebrew validation. Tag only a reviewed main commit after its final gate.
+[#11](https://github.com/ContractorKeith/punch/issues/11) records completed
+v0.1.0 publication and Homebrew validation. Tag only a reviewed main commit
+after its final gate.
+
+The v0.1.0 release's original `punch.rb` asset is preserved. The canonical tap
+and current generator include the subsequent Homebrew audit-format correction
+(inferred version and nested Linux architecture block), with identical binary
+URLs and checksums. Prefer the tap for installation.
 
 ## Artifacts
 

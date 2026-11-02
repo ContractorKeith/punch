@@ -10,8 +10,8 @@ License: MIT.
 
 ## Installation
 
-Release binaries are being prepared; these commands apply once a matching
-version is published on [GitHub Releases](https://github.com/ContractorKeith/punch/releases).
+Release binaries are available on
+[GitHub Releases](https://github.com/ContractorKeith/punch/releases).
 Choose the archive for your platform:
 
 | Platform | v0.1.0 archive |
@@ -36,8 +36,8 @@ On macOS, use the matching archive, `mkdir -p "$HOME/.local/bin"`, and
 `install -m755 punch "$HOME/.local/bin/punch"`. Ensure `~/.local/bin` is on
 `PATH`. macOS packages are unsigned and not notarized.
 
-Once the formula is published in the tap, Homebrew installation is
-`brew install ContractorKeith/tap/punch`. Until then, build from source with
+Install with Homebrew: `brew install ContractorKeith/tap/punch`.
+Alternatively, build from source with
 Rust 1.98+ and a C compiler: `cargo build --locked --release --bin punch`, then
 install `target/release/punch`. GitHub operations require authenticated `gh`;
 the optional Basecamp mirror requires authenticated `basecamp`. Local tasks

@@ -8,10 +8,11 @@ binary that shows every project's issues, PRs, and local tasks on one board,
 lets agents claim and update work with `--json`, and keeps Basecamp in step.
 
 ## Status
-v0.1.0 implementation is merged, including M6 board controls and release
-packaging. Linux and Mac Studio artifact reviews passed; archive fixes #61/#62
-verified independently. Release publication and tap validation are tracked in
-#11. Binding design: `docs/features/v1/SPEC.md`; release: `docs/releasing.md`.
+v0.1.0 released 2026-11-02; M1–M6 complete. Linux and Mac Studio artifact
+reviews passed, including published Homebrew install/test/strict online audit.
+Archive fixes #61/#62 verified independently. Install: `brew install
+ContractorKeith/tap/punch`. Binding design: `docs/features/v1/SPEC.md`;
+release procedure: `docs/releasing.md`.
 
 ## Commands
 ```bash
