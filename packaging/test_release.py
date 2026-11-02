@@ -177,6 +177,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('bin.install "punch"', formula)
         self.assertIn('ENV["PUNCH_STATE_DIR"] = testpath', formula)
         self.assertIn('depends_on arch: :x86_64', formula)
+        self.assertNotIn('  version "', formula)
+        self.assertIn('    on_intel do\n      url "' +
+                      'https://github.com/ContractorKeith/punch/releases/download/v0.1.0/' +
+                      names[0] + '"', formula)
         if shutil.which("ruby"):
             syntax = subprocess.run(
                 ["ruby", "-c", str(self.work / "punch.rb")], capture_output=True, text=True,
