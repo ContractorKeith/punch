@@ -23,4 +23,4 @@ todo ┌Detail · j/k scroll, Esc close─────────────�
 │    │                                                                                        │    │
 │    │                                                                                        │    │
 └────└────────────────────────────────────────────────────────────────────────────────────────┘────┘
-h/l column  j/k card  Space move  Enter detail  ? help  q quit
+c claim  u unclaim  s sync  ? help  q quit  h/l column  j/k card  Enter detail

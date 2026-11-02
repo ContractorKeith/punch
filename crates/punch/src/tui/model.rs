@@ -21,6 +21,7 @@ pub enum Mode {
     Filter(String),
 }
 pub struct Board {
+    pub pending: Option<super::actions::Pending>,
     pub mode: Mode,
     pub edit_request: Option<Task>,
     pub status: Option<(String, std::time::Instant)>,
@@ -38,6 +39,7 @@ pub struct Board {
 impl Board {
     pub fn load(store: &mut Store, actor: Actor) -> Result<Self, PunchError> {
         let mut board = Self {
+            pending: None,
             mode: Mode::Board,
             edit_request: None,
             status: None,
@@ -138,10 +140,48 @@ impl Board {
         ));
     }
     pub fn status_text(&self) -> Option<&str> {
+        if let Some(pending) = &self.pending {
+            return Some(&pending.label);
+        }
         self.status
             .as_ref()
             .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(5))
             .map(|(text, _)| text.as_str())
+    }
+    pub fn poll_action(&mut self, store: &mut Store) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(pending) = &self.pending else {
+            return;
+        };
+        let result = match pending.result.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(PunchError::storage(
+                "board action stopped; read back before retrying",
+            )),
+        };
+        self.pending = None;
+        // Reload even on failure: a remote write or a subset of sync may have succeeded.
+        if let Err(error) = self.reload(store) {
+            self.flash(error);
+            return;
+        }
+        match result {
+            Ok(out) => {
+                let mut text = out.data;
+                for warning in out.warnings {
+                    text.push_str(&format!("; {warning}"));
+                }
+                self.status = Some((text, std::time::Instant::now()));
+            }
+            Err(error) => self.flash(error),
+        }
+    }
+    fn start_action(&mut self, action: super::actions::Action) {
+        match action.start(self.actor.clone()) {
+            Ok(pending) => self.pending = Some(pending),
+            Err(error) => self.flash(error),
+        }
     }
     pub(super) fn complete_action<T>(&mut self, store: &mut Store, out: Outcome<T>) -> Option<T> {
         self.status = (!out.warnings.is_empty())
@@ -358,7 +398,28 @@ impl Board {
             }
             Mode::Board => {}
         }
+        // Keep navigation and quit available while preventing overlapping writes.
+        if self.pending.is_some()
+            && matches!(
+                key,
+                KeyCode::Char('a' | 'e' | 'P' | 'x' | 'H' | 'L' | ' ' | 'c' | 'u' | 's')
+                    | KeyCode::Backspace
+            )
+        {
+            return;
+        }
         match key {
+            KeyCode::Char('c' | 'u') if event.kind != crossterm::event::KeyEventKind::Repeat => {
+                if let Some(task) = self.selected().cloned() {
+                    self.start_action(super::actions::Action::Claim {
+                        task: Box::new(task),
+                        claimed: key == KeyCode::Char('c'),
+                    });
+                }
+            }
+            KeyCode::Char('s') if event.kind != crossterm::event::KeyEventKind::Repeat => {
+                self.start_action(super::actions::Action::Sync(self.project.clone()));
+            }
             KeyCode::Char('a') => {
                 if let Some(project) = &self.project {
                     self.mode = Mode::Add {

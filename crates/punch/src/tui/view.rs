@@ -13,7 +13,7 @@ pub const LABELS: [&str; 6] = [
     "Done",
     "Shipped",
 ];
-const HELP: &str = "h/l  Focus column\nj/k  Focus card (scroll in detail/help)\nH/L  Move card left/right\nSpace/Backspace  Next/previous column\np  Choose project (including all)\n/  Filter title, notes, ref, project\nEnter  Detail pane\na  Add a local card (choose project, then title)\ne  Edit notes in $EDITOR\nP  Cycle priority 0-3\nx  Archive (confirm y)\n?  Help\nq  Quit\nEsc  Close/cancel\n\nGitHub columns are derived. Agents cannot finish or archive.\nThe board reloads external changes once a second.";
+const HELP: &str = "h/l  Focus column\nj/k  Focus card (scroll in detail/help)\nH/L  Move card left/right\nSpace/Backspace  Next/previous column\np  Choose project (including all)\n/  Filter title, notes, ref, project\nEnter  Detail pane\na  Add a local card (choose project, then title)\ne  Edit notes in $EDITOR\nP  Cycle priority 0-3\nx  Archive (confirm y)\nc  Claim selected card\nu  Unclaim selected card\ns  Sync project filter (all = all projects)\n?  Help\nq  Quit\nEsc  Close/cancel\n\nGitHub columns are derived. Agents cannot finish or archive.\nClaim/sync run in the background; writes are disabled until completion.\nThe board reloads external changes once a second.";
 
 pub fn draw(frame: &mut Frame, board: &Board) {
     let area = frame.area();
@@ -89,11 +89,9 @@ pub fn draw(frame: &mut Frame, board: &Board) {
         frame.render_stateful_widget(list, *rect, &mut state);
     }
     frame.render_widget(
-        Paragraph::new(
-            board
-                .status_text()
-                .unwrap_or("h/l column  j/k card  Space move  Enter detail  ? help  q quit"),
-        )
+        Paragraph::new(board.status_text().unwrap_or(
+            "c claim  u unclaim  s sync  ? help  q quit  h/l column  j/k card  Enter detail",
+        ))
         .style(Style::default().fg(if board.status_text().is_some() {
             Color::Yellow
         } else {

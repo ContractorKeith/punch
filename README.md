@@ -188,6 +188,17 @@ a second. `--json` remains noninteractive; agents should use `list --json`.
 Move the selected card with `H/L` or `Space/Backspace`, cycle its priority with
 `P`, add with `a`, edit notes with `e` (set `$EDITOR`), and archive with `x`
 then `y`. Adding from “all” first asks for a project; new cards start in Todo.
+Claim the selected card with `c`, unclaim it with `u`, and sync with `s`.
+Sync uses the project picker filter: “all” syncs all active projects; the text
+filter does not restrict it. Claims use the board actor (`PUNCH_AGENT`/`--as`
+for an agent slot). GitHub claims assign/unassign `@me` through the existing ops.
+Claim and sync run in the background with a persistent progress message.
+Navigation, filtering, help, and quit stay available; further writes are ignored
+until the action finishes. Quitting restores the terminal immediately and does
+not wait for the action; read back or sync before retrying an interrupted write.
+Completion reloads the board, retains selection when visible, and reports sync
+successes, per-project failures, and Basecamp warnings. Claims retain the selected
+revision and refuse stale cards, including concurrent edits during remote work.
 Notes edits and archive confirmations retain the original revision, so an
 external update produces `stale` and reloads instead of overwriting it. Other
 refusals and successful-action warnings flash for five seconds. `j/k` scroll long detail and help panes;
