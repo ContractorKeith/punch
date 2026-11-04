@@ -65,9 +65,11 @@ impl ChildGroup {
         })
     }
     fn exited(&self) -> std::io::Result<bool> {
-        // SAFETY: zero is valid for siginfo_t; waitid initializes this writable
-        // buffer. WEXITED makes si_pid valid, including zero for no status yet.
+        // SAFETY: all-zero bytes are a valid siginfo_t (plain C struct of integers/unions).
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a live, writable siginfo_t for the whole call, and the id
+        // and options are plain values; waitid retains no pointers after returning.
+        // WEXITED makes si_pid valid, including zero when no status is ready yet.
         let result = unsafe {
             libc::waitid(
                 libc::P_PID,
