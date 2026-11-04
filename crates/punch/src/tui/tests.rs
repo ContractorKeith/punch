@@ -171,6 +171,8 @@ esac
         std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    // SAFETY: per the comment on this fn, each caller is an isolated single-test
+    // subprocess, so no other thread reads or writes the environment concurrently.
     unsafe {
         std::env::set_var("PATH", path);
     }

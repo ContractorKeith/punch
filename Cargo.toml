@@ -10,4 +10,5 @@ repository = "https://github.com/ContractorKeith/punch"
 rust-version = "1.98"
 
 [workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
 unwrap_used = "warn"
